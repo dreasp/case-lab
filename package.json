@@ -1,0 +1,18 @@
+{
+  "name": "case-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Case Lab: B-roll builder and footage analysis for true crime videos",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cfb": "1.2.2",
+    "express": "4.21.2",
+    "mammoth": "1.8.0"
+  }
+}

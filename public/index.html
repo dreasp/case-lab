@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Case Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Login -->
+  <section id="login" class="login hidden">
+    <form id="loginForm" class="login-card">
+      <div class="brand big">CASE<span>LAB</span></div>
+      <p class="muted">Enter your password to continue.</p>
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" required>
+      <button class="btn primary" type="submit">Log in</button>
+      <p id="loginError" class="error"></p>
+    </form>
+  </section>
+
+  <!-- App -->
+  <div id="app" class="hidden">
+    <header class="topbar">
+      <div class="brand">CASE<span>LAB</span></div>
+      <nav class="modes">
+        <button class="mode active" data-mode="broll">B-roll builder</button>
+        <button class="mode" data-mode="footage">Footage analysis <em>soon</em></button>
+      </nav>
+      <button id="logout" class="btn ghost small">Log out</button>
+    </header>
+
+    <div id="setupWarning" class="banner hidden"></div>
+
+    <main id="mode-broll" class="layout">
+      <aside class="sidebar">
+        <button id="newProject" class="btn primary block">+ New project</button>
+        <h4>Projects</h4>
+        <ul id="projectList" class="project-list"></ul>
+      </aside>
+
+      <section class="work">
+        <!-- Step 1: import -->
+        <div id="importPanel" class="panel">
+          <h2>New B-roll project</h2>
+          <p class="muted">Upload your ElevenLabs narration and the script. The app finds real, non-violent stock footage that shows what you're saying, sentence by sentence.</p>
+          <label class="field">Title
+            <input id="titleInput" placeholder="e.g. You have the right to remain silent">
+          </label>
+          <div class="drops">
+            <label class="drop" id="audioDrop">
+              <input id="audioFile" type="file" accept=".aaf,.mp3,.wav,.m4a,audio/*" hidden>
+              <strong>Narration</strong>
+              <span>AAF from ElevenLabs (best), or MP3 / WAV</span>
+              <em id="audioName">Click or drop a file</em>
+            </label>
+            <label class="drop" id="scriptDrop">
+              <input id="scriptFile" type="file" accept=".docx,.txt" hidden>
+              <strong>Script</strong>
+              <span>Word (.docx) or text file, one paragraph per ElevenLabs paragraph</span>
+              <em id="scriptName">Click or drop a file</em>
+            </label>
+          </div>
+          <button id="importBtn" class="btn primary" disabled>Import</button>
+          <p id="importStatus" class="status"></p>
+        </div>
+
+        <!-- Project -->
+        <div id="projectPanel" class="hidden">
+          <div class="project-head">
+            <div>
+              <h2 id="projectTitle"></h2>
+              <p id="projectMeta" class="muted"></p>
+            </div>
+            <div class="head-actions">
+              <button id="deleteProject" class="btn ghost small">Delete project</button>
+            </div>
+          </div>
+
+          <div class="viewer">
+            <canvas id="canvas" width="1920" height="1080"></canvas>
+            <div class="viewer-bar">
+              <button id="playBtn" class="btn small">▶ Play</button>
+              <button id="stopBtn" class="btn small ghost">■ Stop</button>
+              <span id="timeLabel" class="mono">0:00 / 0:00</span>
+              <span id="playerState" class="muted small-text"></span>
+              <div class="grow"></div>
+              <button id="findBtn" class="btn primary small">Find footage automatically</button>
+              <button id="exportBtn" class="btn accent small">Export video</button>
+            </div>
+            <div id="progressWrap" class="progress hidden">
+              <div class="progress-bar"><div id="progressFill"></div></div>
+              <span id="progressText"></span>
+              <button id="cancelBtn" class="btn ghost small">Cancel</button>
+            </div>
+          </div>
+
+          <div class="shots-head">
+            <h3>Shots</h3>
+            <div class="legend">
+              <span class="dot ai"></span>AI pick
+              <span class="dot you"></span>Your choice
+              <span class="dot none"></span>Needs footage
+            </div>
+            <div class="grow"></div>
+            <button id="creditsBtn" class="btn ghost small">Copy credits</button>
+          </div>
+          <ol id="shotList" class="shot-list"></ol>
+        </div>
+      </section>
+    </main>
+
+    <main id="mode-footage" class="layout hidden">
+      <section class="work">
+        <div class="panel">
+          <h2>Footage analysis</h2>
+          <p class="muted">Coming next: upload police footage and photos, get a speaker-labeled transcript, the best moments in story order, a rough cut and your narration script.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Swap dialog -->
+  <dialog id="swapDialog" class="swap">
+    <div class="swap-head">
+      <div>
+        <div id="swapTime" class="mono muted"></div>
+        <p id="swapText" class="swap-text"></p>
+      </div>
+      <button id="swapClose" class="btn ghost small">Close</button>
+    </div>
+    <form id="swapSearch" class="swap-search">
+      <input id="swapQuery" placeholder="Search Pixabay and Wikimedia, e.g. vintage police car">
+      <button class="btn small" type="submit">Search</button>
+      <label class="btn small ghost">Upload my own
+        <input id="swapUpload" type="file" accept="video/*,image/*" hidden>
+      </label>
+      <button id="swapClear" type="button" class="btn small ghost">Leave empty</button>
+    </form>
+    <p id="swapStatus" class="status"></p>
+    <div id="swapGrid" class="grid"></div>
+  </dialog>
+
+  <script src="/vendor/cfb.js"></script>
+  <script src="/vendor/mammoth.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
