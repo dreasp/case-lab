@@ -88,11 +88,25 @@ async function pixabayPhotos(q, n = 6) {
   const data = await cached('p|' + q, () => pixabayFetch(url));
   return (data.hits || []).map(h => ({
     key: 'pxp-' + h.id, source: 'Pixabay', type: 'photo', id: h.id,
-    url: h.largeImageURL || h.webformatURL, fallback: h.webformatURL, width: h.imageWidth, height: h.imageHeight,
-    thumb: (h.webformatURL || '').replace('_640', '_340') || h.previewURL,
+    ...pixabayPhotoLinks(h), width: h.imageWidth, height: h.imageHeight,
     page: h.pageURL, tags: h.tags,
     credit: `Image by ${h.user || 'unknown'} from Pixabay`,
   })).filter(c => c.url).slice(0, n);
+}
+
+// Pixabay's "pixabay.com/get/..." photo links refuse servers, but the same photos are on
+// cdn.pixabay.com (like the videos). The preview link tells us the CDN address.
+function pixabayPhotoLinks(h) {
+  const prev = h.previewURL || '';
+  const m = prev.match(/^(https:\/\/cdn\.pixabay\.com\/photo\/.+)_150(\.\w+)$/);
+  if (m) {
+    return {
+      url: `${m[1]}_1280${m[2]}`,
+      fallback: `${m[1]}_640${m[2]}`,
+      thumb: `${m[1]}_640${m[2]}`,
+    };
+  }
+  return { url: h.largeImageURL || h.webformatURL, fallback: h.webformatURL, thumb: h.previewURL || h.webformatURL };
 }
 
 // Look up one Pixabay item again (photo links expire after a day)
@@ -107,7 +121,7 @@ async function pixabayById(type, id) {
     // 720p is plenty for B-roll and much lighter to stream
     return (v.medium && v.medium.url) || (v.large && v.large.url) || (v.small && v.small.url) || null;
   }
-  return h.largeImageURL || h.webformatURL || null;
+  return pixabayPhotoLinks(h).url || null;
 }
 
 // Wikimedia: one request at a time, at least 1.5 seconds apart, and wait when told to slow down
@@ -177,7 +191,7 @@ function allowedHost(u) {
   try { host = new URL(u).hostname; } catch (e) { return false; }
   const extra = (process.env.MEDIA_EXTRA_HOSTS || '').split(',').map(s => s.trim()).filter(Boolean);
   return host === 'pixabay.com' || host.endsWith('.pixabay.com') ||
-    host === 'upload.wikimedia.org' || host === 'i.vimeocdn.com' || extra.includes(host);
+    host === 'wikimedia.org' || host.endsWith('.wikimedia.org') || host === 'i.vimeocdn.com' || extra.includes(host);
 }
 
 function pixabayKeyInfo() {
