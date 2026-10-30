@@ -286,7 +286,7 @@ async function mediaUrl(choice) {
     } catch (e) { /* try the old link */ }
   }
   const u = choice.type === 'video' ? (choice.urlSmall || choice.url) : choice.url;
-  return '/api/media?u=' + encodeURIComponent(u);
+  return '/api/media?u=' + encodeURIComponent(u) + (choice.fallback ? '&f=' + encodeURIComponent(choice.fallback) : '');
 }
 
 async function playFrom(t) {

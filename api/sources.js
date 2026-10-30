@@ -88,7 +88,7 @@ async function pixabayPhotos(q, n = 6) {
   const data = await cached('p|' + q, () => pixabayFetch(url));
   return (data.hits || []).map(h => ({
     key: 'pxp-' + h.id, source: 'Pixabay', type: 'photo', id: h.id,
-    url: h.largeImageURL || h.webformatURL, width: h.imageWidth, height: h.imageHeight,
+    url: h.largeImageURL || h.webformatURL, fallback: h.webformatURL, width: h.imageWidth, height: h.imageHeight,
     thumb: (h.webformatURL || '').replace('_640', '_340') || h.previewURL,
     page: h.pageURL, tags: h.tags,
     credit: `Image by ${h.user || 'unknown'} from Pixabay`,
@@ -159,7 +159,9 @@ async function wikimedia(q, n = 5) {
     out.push({
       key: 'wm-' + p.pageid, source: 'Wikimedia', type: 'photo', id: p.pageid,
       url: ii.thumburl || ii.url, width: ii.thumbwidth || ii.width, height: ii.thumbheight || ii.height,
-      thumb: (ii.thumburl || ii.url).replace(/\/(\d+)px-/, '/400px-'),
+      // Wikimedia only serves standard preview sizes (330 is one of them)
+      thumb: (ii.thumburl || ii.url).replace(/\/(\d+)px-/, '/330px-'),
+      fallback: ii.url,
       page: ii.descriptionurl, tags: title,
       credit: `"${title}" by ${artist}, ${lic}, via Wikimedia Commons`,
       needsCredit: !/public domain|^pd|cc0/i.test(lic),

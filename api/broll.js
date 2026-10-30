@@ -112,7 +112,7 @@ async function thumbData(url) {
     const type = (r.headers.get('content-type') || 'image/jpeg').split(';')[0];
     if (!/^image\//.test(type)) return null;
     const buf = Buffer.from(await r.arrayBuffer());
-    if (buf.length > 1.5 * 1024 * 1024) return null;
+    if (buf.length > 3 * 1024 * 1024) return null;
     return { mime_type: type, data: buf.toString('base64') };
   } catch (e) { return null; }
 }
@@ -138,7 +138,9 @@ Answer with a JSON array, one object per shot:
     for (const s of shots) {
       parts.push({ text: `\n=== SHOT ${s.id} (${Math.round(s.duration || 0)}s) ===\nNarration: "${s.text}"` });
       const cands = (s.candidates || []).slice(0, 10);
-      const imgs = await Promise.all(cands.map(c => (c.thumb ? thumbData(c.thumb) : null)));
+      // If a preview won't load, try the photo itself
+      const imgs = await Promise.all(cands.map(async c => (c.thumb && await thumbData(c.thumb)) ||
+        (c.type === 'photo' ? await thumbData(c.fallback || c.url) : null)));
       cands.forEach((c, i) => {
         const label = `Candidate ${i} (${c.type.toUpperCase()}${c.duration ? ', ' + c.duration + 's' : ''}, ${c.source}, tags: ${String(c.tags || '').slice(0, 80)})`;
         if (imgs[i]) {
@@ -177,14 +179,24 @@ router.post('/refresh', async (req, res) => {
 
 // Pass stock footage through to the browser so it can be drawn into the video
 router.get('/media', async (req, res) => {
-  const u = String(req.query.u || '');
-  if (!src.allowedHost(u)) return res.status(400).send('Source not allowed');
+  const urls = [String(req.query.u || ''), String(req.query.f || '')].filter(Boolean);
+  if (!urls.every(src.allowedHost)) return res.status(400).send('Source not allowed');
   const ac = new AbortController();
   res.on('close', () => ac.abort());
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
   try {
     const headers = { ...src.BROWSER_HEADERS };
     if (req.headers.range) headers.Range = req.headers.range;
-    const r = await fetch(u, { headers, signal: ac.signal });
+    let r;
+    // Try the main link (waiting a little if the site says "too many requests"), then the backup link
+    outer: for (const u of urls) {
+      for (const wait of [0, 2000, 5000]) {
+        if (wait) await sleep(wait);
+        r = await fetch(u, { headers, signal: ac.signal });
+        if (r.ok) break outer;
+        if (r.status !== 429 && r.status < 500) break;
+      }
+    }
     res.status(r.status);
     for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
       const v = r.headers.get(h);
@@ -211,12 +223,13 @@ router.get('/check', async (req, res) => {
       const first = r[0] || {};
       out[name] = { found: r.length, firstThumb: first.thumb || null };
       if (first.thumb) out[name].thumbLoads = !!(await thumbData(first.thumb));
-      if (first.url) {
+      for (const [label, u] of [['file', first.url], ['backupFile', first.fallback]]) {
+        if (!u) continue;
         try {
-          const m = await fetch(first.url, { headers: { ...src.BROWSER_HEADERS, Range: 'bytes=0-1000' } });
-          out[name].fileLoads = m.ok;
-          out[name].fileStatus = m.status;
-        } catch (e) { out[name].fileLoads = false; out[name].fileError = e.message; }
+          const m = await fetch(u, { headers: { ...src.BROWSER_HEADERS, Range: 'bytes=0-1000' } });
+          out[name][label + 'Loads'] = m.ok;
+          out[name][label + 'Status'] = m.status;
+        } catch (e) { out[name][label + 'Loads'] = false; out[name][label + 'Error'] = e.message; }
       }
     } catch (e) { out[name] = { error: e.message }; }
   };
