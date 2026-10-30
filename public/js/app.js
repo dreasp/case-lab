@@ -1,4 +1,4 @@
-import { store } from './store.js';
+import { cloudStore as store, syncAll, onSync } from './cloud.js';
 import { readAAF, readAudio, readScript, buildTimeline, wordCountCheck } from './importer.js';
 import { Renderer, drawMedia, mediaLayout, frameFor, SIZES } from './renderer.js';
 
@@ -55,6 +55,8 @@ async function start() {
   $('setupWarning').classList.toggle('hidden', !missing.length);
   $('setupWarning').textContent = missing.length ? `Missing on the server: ${missing.join(', ')}. Add them in Render > Environment.` : '';
   await refreshProjects();
+  // Copy anything saved only in this browser up to the cloud
+  syncAll().then(refreshProjects).catch(() => {});
   const list = await store.listProjects();
   if (list.length) await openProject(list[0].id); else showImport();
 }
@@ -72,7 +74,7 @@ async function refreshProjects() {
   $('projectList').innerHTML = list.map(p => `
     <li class="${project && p.id === project.id ? 'active' : ''}" data-id="${p.id}">
       <strong>${esc(p.title)}</strong>
-      <span>${fmt(p.duration)} · ${p.shots.length} shots</span>
+      <span>${fmt(p.duration)} · ${p.shotCount} shots</span>
     </li>`).join('') || '<li class="empty">No projects yet</li>';
   $('projectList').querySelectorAll('li[data-id]').forEach(li => li.addEventListener('click', () => openProject(li.dataset.id)));
 }
@@ -152,7 +154,10 @@ async function openProject(id) {
   const p = await store.getProject(id);
   if (!p) return showImport();
   project = p;
+  $('projectPanel').classList.add('hidden');
+  $('importPanel').classList.add('hidden');
   audioBlob = await store.getFile(id + ':audio');
+  if (!audioBlob) alert('The narration audio for this project could not be found on this computer or in the cloud.');
   for (const u of objectUrls.values()) URL.revokeObjectURL(u);
   objectUrls.clear();
   renderer.setProject(project.shots, audioBlob);
@@ -179,7 +184,7 @@ function renderHeader() {
 }
 
 $('deleteProject').addEventListener('click', async () => {
-  if (!project || !confirm(`Delete "${project.title}" from this browser?`)) return;
+  if (!project || !confirm(`Delete "${project.title}"?\n\nIt will be removed everywhere, including the cloud copy and your uploaded clips. Videos you already exported stay on your computer.`)) return;
   renderer.stop();
   await store.deleteProject(project.id);
   project = null;
@@ -775,4 +780,20 @@ $('editSave').addEventListener('click', async () => {
   await save();
   await renderShots();
   renderer.showFrame(shot.start + 0.01).catch(() => {});
+});
+
+// ---------- cloud save indicator ----------
+onSync(({ state, error }) => {
+  const el = $('syncState');
+  const map = {
+    checking: ['', ''],
+    off: ['Saved in this browser only', 'off'],
+    saving: ['Saving to cloud…', 'saving'],
+    saved: ['Saved to cloud', 'saved'],
+    error: ['Cloud save problem (saved in this browser)', 'error'],
+  };
+  const [text, cls] = map[state] || ['', ''];
+  el.textContent = text;
+  el.className = 'sync ' + cls;
+  el.title = error || '';
 });

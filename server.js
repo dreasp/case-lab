@@ -17,10 +17,11 @@ if (fs.existsSync(envPath)) {
 
 const auth = require('./api/auth');
 const broll = require('./api/broll');
+const cloud = require('./api/cloud');
 
 const app = express();
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '20mb' }));
 
 // Browser libraries served from node_modules (no CDN needed)
 app.get('/vendor/cfb.js', (req, res) =>
@@ -30,6 +31,7 @@ app.get('/vendor/mammoth.js', (req, res) =>
 
 app.use('/api', auth.router);
 app.use('/api', auth.requireLogin, broll.router);
+app.use('/api', auth.requireLogin, cloud.router);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.json({ ok: true }));

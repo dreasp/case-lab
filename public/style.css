@@ -160,6 +160,15 @@ input:focus { outline: none; border-color: var(--gold); }
 .cand img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; }
 .cand figcaption { display: flex; justify-content: space-between; padding: 6px 8px; font-size: 12px; color: var(--muted); }
 
+/* Cloud save indicator */
+.sync { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.sync::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); display: none; }
+.sync.saved::before { display: block; background: var(--ok); }
+.sync.saving::before { display: block; background: var(--gold); }
+.sync.error { color: var(--accent-2); }
+.sync.error::before { display: block; background: var(--accent-2); }
+.sync.off::before { display: block; background: #555; }
+
 /* Segmented buttons */
 .seg { display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 2px; gap: 2px; }
 .seg button { background: none; border: 0; color: var(--muted); padding: 6px 10px; border-radius: 6px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }

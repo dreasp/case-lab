@@ -11,8 +11,10 @@
     "node": ">=20"
   },
   "dependencies": {
+    "aws4fetch": "^1.0.20",
     "cfb": "1.2.2",
     "express": "4.21.2",
-    "mammoth": "1.8.0"
+    "mammoth": "1.8.0",
+    "pg": "^8.13.1"
   }
 }

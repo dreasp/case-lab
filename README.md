@@ -18,6 +18,13 @@ One app for two jobs:
 | `GEMINI_API_KEY` | Google AI Studio key |
 | `PIXABAY_API_KEY` | Pixabay key from pixabay.com/api/docs |
 | `GEMINI_MODEL` | Optional, defaults to `gemini-2.5-flash` |
+| `DATABASE_URL` | Neon connection string (cloud saving of projects) |
+| `R2_ACCOUNT_ID` | Cloudflare account ID |
+| `R2_ACCESS_KEY_ID` | R2 API token access key |
+| `R2_SECRET_ACCESS_KEY` | R2 API token secret |
+| `R2_BUCKET` | R2 bucket name, e.g. `case-lab` |
+
+Without the cloud settings, projects are saved in the browser only. With them, every project is saved in the browser and in the cloud, so it opens on any computer. Check the setup at `/api/cloud/check`.
 
 ## Run on your computer
 
@@ -35,7 +42,9 @@ Then open http://localhost:3000. Put the settings in a `.env` file (see `.env.ex
 - `api/broll.js`: B-roll routes (plan, candidates, pick, search, media)
 - `api/sources.js`: Pixabay and Wikimedia searches
 - `api/gemini.js`: Gemini calls with retries
+- `api/cloud.js`: cloud saving (Neon + R2)
 - `public/js/importer.js`: reads AAF, audio and Word script, builds timings
 - `public/js/renderer.js`: preview and export
 - `public/js/app.js`: the screens
 - `public/js/store.js`: saving projects in the browser
+- `public/js/cloud.js`: copies projects and files to the cloud
