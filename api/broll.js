@@ -18,8 +18,8 @@ router.post('/plan', async (req, res) => {
     const { title = '', script = '', shots = [] } = req.body || {};
     if (!shots.length) return res.status(400).json({ error: 'No sentences sent.' });
     const out = [];
-    for (let i = 0; i < shots.length; i += 30) {
-      const group = shots.slice(i, i + 30);
+    for (let i = 0; i < shots.length; i += 100) {
+      const group = shots.slice(i, i + 100);
       const prompt = `You are a video editor choosing B-roll for a YouTube documentary narration titled "${title}".
 
 FULL SCRIPT (for context only):
@@ -151,8 +151,22 @@ Answer with a JSON array, one object per shot:
         }
       });
     }
-    const result = await generateJSON(parts, { temperature: 0.1 });
-    const arr = Array.isArray(result) ? result : (result.shots || []);
+    let arr;
+    try {
+      const result = await generateJSON(parts, { temperature: 0.1, images: true });
+      arr = Array.isArray(result) ? result : (result.shots || []);
+    } catch (e) {
+      if (e.code !== 'BLOCKED') throw e;
+      // Gemini refused to look at this batch: use the top video search result instead of leaving shots empty
+      const picks = {};
+      for (const s of shots) {
+        const cands = s.candidates || [];
+        const v = cands.findIndex(c => c.type === 'video');
+        const best = v >= 0 ? v : (cands.length ? 0 : -1);
+        picks[s.id] = { best, alt: -1, why: 'Top search result (AI review was blocked), check this one' };
+      }
+      return res.json({ picks, warning: e.message });
+    }
     const picks = {};
     for (const s of shots) {
       const r = arr.find(x => String(x.id) === String(s.id)) || {};

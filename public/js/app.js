@@ -331,9 +331,9 @@ async function findFootage() {
 
     // 1) search terms
     let list = todo().filter(s => !s.plan);
-    for (let i = 0; i < list.length && !cancelFlag; i += 60) {
-      progress(true, 0.05, `Writing search terms with AI (${Math.min(i + 60, list.length)} of ${list.length})…`);
-      const batch = list.slice(i, i + 60);
+    for (let i = 0; i < list.length && !cancelFlag; i += 100) {
+      progress(true, 0.05, `Writing search terms with AI (${Math.min(i + 100, list.length)} of ${list.length})…`);
+      const batch = list.slice(i, i + 100);
       const r = await api('plan', { title: project.title, script, shots: batch.map(s => ({ id: s.id, text: s.text })) });
       for (const p of r.shots) { const s = project.sentences.find(x => x.id === p.id); if (s) s.plan = p; }
       await save();
@@ -356,7 +356,8 @@ async function findFootage() {
     const groups = [];
     let g = [], imgs = 0;
     for (const s of list) {
-      if (g.length && imgs + s.candidates.length > 40) { groups.push(g); g = []; imgs = 0; }
+      // Big batches: the free Gemini tier only allows 20 requests a day
+      if (g.length && imgs + s.candidates.length > 110) { groups.push(g); g = []; imgs = 0; }
       g.push(s); imgs += s.candidates.length;
     }
     if (g.length) groups.push(g);
@@ -371,6 +372,7 @@ async function findFootage() {
           shots: withCands.map(s => ({ id: s.id, text: s.text, duration: s.end - s.start, candidates: s.candidates })),
         });
         for (const s of withCands) s.pick = r.picks[s.id] || { best: -1, alt: -1, why: '' };
+        if (r.warning) sourceErrors.add(r.warning);
       }
       for (const s of grp) if (!s.candidates.length) s.pick = { best: -1, alt: -1, why: 'Nothing found on the stock sites' };
       done += grp.length;
