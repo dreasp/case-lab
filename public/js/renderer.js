@@ -2,7 +2,63 @@
 // Everything here runs in the browser, so the free server does no video work.
 
 const FADE = 0.35;      // crossfade length in seconds
-const LOOKAHEAD = 25;   // seconds of footage loaded ahead of the playhead
+const LOOKAHEAD = 20;   // seconds of footage prepared ahead of the playhead
+
+export const SIZES = { '16:9': [1920, 1080], '9:16': [1080, 1920] };
+
+// ---------- drawing helpers (also used by the shot editor) ----------
+const blurCanvas = document.createElement('canvas');
+
+// How a picture is placed. frame = { x, y, zoom, mode } where x/y (0..1) pick which part stays
+// visible when cropping, zoom >= 1, and mode is 'fill' (crop to fill), 'fit' (whole picture,
+// blurred sides) or 'auto'.
+export function mediaLayout(el, W, H, frame = {}, extraZoom = 1) {
+  const w = el.videoWidth || el.naturalWidth || el.width;
+  const h = el.videoHeight || el.naturalHeight || el.height;
+  let mode = frame.mode || 'auto';
+  if (mode === 'auto') {
+    // Photos with a very different shape are shown whole; videos fill the frame
+    const ratio = (w / h) / (W / H);
+    mode = el.tagName !== 'VIDEO' && (ratio < 0.8 || ratio > 1.25) ? 'fit' : 'fill';
+  }
+  const zoom = (frame.zoom || 1) * extraZoom;
+  const s = (mode === 'fit' ? Math.min(W / w, H / h) : Math.max(W / w, H / h)) * zoom;
+  return { w, h, mode, dw: w * s, dh: h * s };
+}
+
+export function drawMedia(x, el, W, H, frame = {}, extraZoom = 1) {
+  const { w, h, mode } = mediaLayout(el, W, H, frame, extraZoom);
+  if (!w || !h) return;
+  const fx = frame.x ?? 0.5, fy = frame.y ?? 0.5;
+  const zoom = (frame.zoom || 1) * extraZoom;
+  if (mode === 'fit') {
+    // Soft blurred copy behind, whole picture on top
+    const bw = W >= H ? 192 : 108, bh = W >= H ? 108 : 192;
+    blurCanvas.width = bw; blurCanvas.height = bh;
+    const b = blurCanvas.getContext('2d');
+    b.filter = 'blur(6px) brightness(0.5)';
+    const sb = Math.max(bw / w, bh / h) * 1.2;
+    b.drawImage(el, (bw - w * sb) / 2, (bh - h * sb) / 2, w * sb, h * sb);
+    x.imageSmoothingEnabled = true;
+    x.drawImage(blurCanvas, 0, 0, W, H);
+    const s = Math.min(W / w, H / h) * zoom;
+    const dw = w * s, dh = h * s;
+    x.drawImage(el, (W - dw) * fx, (H - dh) * fy, dw, dh);
+  } else {
+    const s = Math.max(W / w, H / h) * zoom;
+    const dw = w * s, dh = h * s;
+    x.drawImage(el, (W - dw) * fx, (H - dh) * fy, dw, dh);
+  }
+}
+
+export function frameFor(shot, aspect) {
+  return (shot.edit && shot.edit.frames && shot.edit.frames[aspect]) || {};
+}
+
+const waitFor = (el, evt, ms) => new Promise(res => {
+  const t = setTimeout(res, ms);
+  el.addEventListener(evt, () => { clearTimeout(t); res(); }, { once: true });
+});
 
 export class Renderer {
   constructor(canvas, { mediaUrl, onTime, onState }) {
@@ -11,8 +67,15 @@ export class Renderer {
     this.mediaUrl = mediaUrl;          // async (shot) => url string or null
     this.onTime = onTime || (() => {});
     this.onState = onState || (() => {});
-    this.cache = new Map();            // shot.id -> {status, el, url, bg}
+    this.cache = new Map();            // shot.id -> {status, el, url}
     this.running = false;
+    this.aspect = '16:9';
+  }
+
+  setAspect(aspect) {
+    this.aspect = SIZES[aspect] ? aspect : '16:9';
+    const [w, h] = SIZES[this.aspect];
+    this.canvas.width = w; this.canvas.height = h;
   }
 
   setProject(shots, audioBlob) {
@@ -30,37 +93,45 @@ export class Renderer {
 
   get duration() { return this.audioBuffer ? this.audioBuffer.duration : (this.shots.at(-1)?.end || 0); }
 
+  startPoint(shot) { return (shot.edit && shot.edit.start) || 0; }
+
   // ---------- media loading ----------
+  // Videos are streamed (only the part that's used is downloaded); photos are loaded whole.
   async load(shot) {
     let item = this.cache.get(shot.id);
-    if (item && item.choiceRef === shot.choice) return item.ready;
+    const sig = JSON.stringify([shot.choice && shot.choice.key, this.startPoint(shot)]);
+    if (item && item.choiceRef === shot.choice && item.sig === sig) return item.ready;
     if (item) this.release(shot.id);
-    item = { status: 'loading', choiceRef: shot.choice };
+    item = { status: 'loading', choiceRef: shot.choice, sig };
     this.cache.set(shot.id, item);
     item.ready = (async () => {
       try {
         if (!shot.choice) { item.status = 'empty'; return item; }
         const url = await this.mediaUrl(shot);
         if (!url) throw new Error('no url');
-        const r = await fetch(url);
-        if (!r.ok) throw new Error('fetch ' + r.status);
-        const blob = await r.blob();
-        item.url = URL.createObjectURL(blob);
         if (shot.choice.type === 'video') {
           const v = document.createElement('video');
           v.muted = true; v.playsInline = true; v.preload = 'auto'; v.loop = true;
-          v.src = item.url;
+          v.crossOrigin = 'anonymous';
+          v.src = url;
           await new Promise((res, rej) => {
-            v.oncanplay = res; v.onerror = () => rej(new Error('video decode'));
-            setTimeout(() => rej(new Error('video timeout')), 30000);
+            const t = setTimeout(() => rej(new Error('video timeout')), 60000);
+            v.addEventListener('loadeddata', () => { clearTimeout(t); res(); }, { once: true });
+            v.addEventListener('error', () => { clearTimeout(t); rej(new Error('video error')); }, { once: true });
           });
+          // Jump to the chosen start point now, so the shot starts instantly later
+          const target = this.clipTime(shot, v, 0);
+          if (Math.abs(v.currentTime - target) > 0.05) { v.currentTime = target; await waitFor(v, 'seeked', 15000); }
           item.el = v;
+          item.url = null;
         } else {
+          const r = await fetch(url);
+          if (!r.ok) throw new Error('fetch ' + r.status);
+          item.url = URL.createObjectURL(await r.blob());
           const img = new Image();
           img.src = item.url;
           await img.decode();
           item.el = img;
-          item.bg = this.blurredBackground(img);
         }
         item.status = 'ready';
       } catch (e) {
@@ -72,16 +143,13 @@ export class Renderer {
     return item.ready;
   }
 
-  blurredBackground(img) {
-    const w = img.naturalWidth, h = img.naturalHeight;
-    const ratio = (w / h) / (16 / 9);
-    if (ratio > 0.87 && ratio < 1.15) return null; // close enough to 16:9: just fill
-    const c = document.createElement('canvas');
-    c.width = 480; c.height = 270;
-    const x = c.getContext('2d');
-    x.filter = 'blur(18px) brightness(0.55)';
-    drawCover(x, img, w, h, 480, 270, 1.15, 0, 0);
-    return c;
+  // Where in the clip we should be, `into` seconds after the shot starts
+  clipTime(shot, v, into) {
+    const d = v.duration || 0;
+    const start = this.startPoint(shot) || (d > 3 ? 0.5 : 0);
+    if (!d) return start;
+    const t = start + into;
+    return t < d - 0.05 ? t : start + ((t - start) % Math.max(0.1, d - start));
   }
 
   release(id) {
@@ -92,7 +160,6 @@ export class Renderer {
     this.cache.delete(id);
   }
   releaseAll() { for (const id of [...this.cache.keys()]) this.release(id); }
-
   invalidate(shotId) { this.release(shotId); }
 
   // ---------- drawing ----------
@@ -116,21 +183,13 @@ export class Renderer {
       x.globalAlpha = 1;
       return;
     }
-    const el = it.el;
-    if (el.tagName === 'VIDEO') {
-      drawCover(x, el, el.videoWidth, el.videoHeight, W, H, 1, 0, 0);
-    } else {
+    let kb = 1;
+    if (it.el.tagName !== 'VIDEO') {
+      // Slow zoom on photos
       const p = Math.min(1, Math.max(0, (t - shot.start) / Math.max(0.1, shot.end - shot.start)));
-      const zoomIn = i % 2 === 0;
-      const z = zoomIn ? 1 + 0.08 * p : 1.08 - 0.08 * p;
-      const pan = (i % 3 - 1) * 0.02 * (p - 0.5);
-      if (it.bg) {
-        x.drawImage(it.bg, 0, 0, W, H);
-        drawContain(x, el, el.naturalWidth, el.naturalHeight, W, H, z);
-      } else {
-        drawCover(x, el, el.naturalWidth, el.naturalHeight, W, H, z, pan, 0);
-      }
+      kb = i % 2 === 0 ? 1 + 0.08 * p : 1.08 - 0.08 * p;
     }
+    drawMedia(x, it.el, W, H, frameFor(shot, this.aspect), kb);
     x.globalAlpha = 1;
   }
 
@@ -145,11 +204,9 @@ export class Renderer {
     this.onState('loading');
 
     // Load the first stretch of footage before starting
-    const first = this.shotAt(from);
-    const initial = this.shots.filter(s => s.end > from && s.start < from + 12);
+    const initial = this.shots.filter(s => s.end > from && s.start < from + 10);
     await Promise.all(initial.map(s => this.load(s)));
-    if (this.token !== token) return;
-    void first;
+    if (this.token !== token) return null;
 
     const src = this.actx.createBufferSource();
     src.buffer = this.audioBuffer;
@@ -175,13 +232,31 @@ export class Renderer {
 
     const startAt = this.actx.currentTime + 0.05;
     src.start(startAt, from);
-    let offset = from;           // timeline time when the clock started
+    let offset = from;
     let clockStart = startAt;
     let stalled = false;
     let lastIdx = -1;
 
     const finished = new Promise(resolve => { this._resolveFinish = resolve; });
     const end = this.duration;
+
+    // Pause audio + recording while footage catches up, then carry on
+    const stall = async (t, waitFn) => {
+      stalled = true; offset = t;
+      await this.actx.suspend();
+      if (recorder && recorder.state === 'recording') recorder.pause();
+      for (const it of this.cache.values()) if (it.el && it.el.tagName === 'VIDEO') it.el.pause();
+      this.onState('buffering');
+      await waitFn();
+      if (this.token !== token) return;
+      const cur = this.cache.get(this.shots[this.shotAt(t)].id);
+      if (cur && cur.el && cur.el.tagName === 'VIDEO') await cur.el.play().catch(() => {});
+      await this.actx.resume();
+      clockStart = this.actx.currentTime;
+      if (recorder && recorder.state === 'paused') recorder.resume();
+      stalled = false;
+      this.onState(record ? 'recording' : 'playing');
+    };
 
     const tick = async () => {
       if (this.token !== token) return;
@@ -190,7 +265,7 @@ export class Renderer {
       const i = this.shotAt(Math.max(t, 0));
       const shot = this.shots[i];
 
-      // Keep footage loaded ahead, free what is behind
+      // Keep footage prepared ahead, free what is behind
       for (const s of this.shots) {
         if (s.end > t - 2 && s.start < t + LOOKAHEAD) this.load(s);
         else if (s.end < t - 3 && this.cache.has(s.id)) this.release(s.id);
@@ -198,30 +273,15 @@ export class Renderer {
 
       const it = this.cache.get(shot.id);
       if (!it || it.status === 'loading') {
-        // Footage not ready yet: pause everything (audio, recording) until it is
-        if (!stalled) {
-          stalled = true; offset = t;
-          await this.actx.suspend();
-          if (recorder && recorder.state === 'recording') recorder.pause();
-          this.onState('buffering');
-          await (it ? it.ready : this.load(shot));
-          if (this.token !== token) return;
-          await this.actx.resume();
-          clockStart = this.actx.currentTime;
-          if (recorder && recorder.state === 'paused') recorder.resume();
-          stalled = false;
-          this.onState(record ? 'recording' : 'playing');
-        }
+        if (!stalled) await stall(t, () => (it ? it.ready : this.load(shot)));
         requestAnimationFrame(tick);
         return;
       }
 
       if (i !== lastIdx) {
-        // New shot: start its video from the beginning (skip the first half second)
         if (it.el && it.el.tagName === 'VIDEO') {
-          const d = it.el.duration || 0;
-          const into = Math.max(0, t - shot.start);
-          it.el.currentTime = d > 3 ? Math.min(0.5 + into, Math.max(0, d - 1)) : into % Math.max(d, 0.1);
+          const target = this.clipTime(shot, it.el, Math.max(0, t - shot.start));
+          if (Math.abs(it.el.currentTime - target) > 0.3) it.el.currentTime = target;
           it.el.play().catch(() => {});
         }
         const prev = this.shots[lastIdx];
@@ -230,6 +290,11 @@ export class Renderer {
           if (pi && pi.el && pi.el.tagName === 'VIDEO') setTimeout(() => pi.el.pause(), FADE * 1000 + 100);
         }
         lastIdx = i;
+      } else if (it.el && it.el.tagName === 'VIDEO' && it.el.readyState < 3 && !it.el.ended) {
+        // The streamed video is still downloading: wait for it instead of freezing on screen
+        if (!stalled) await stall(t, () => waitFor(it.el, 'canplay', 20000));
+        requestAnimationFrame(tick);
+        return;
       }
 
       const since = t - shot.start;
@@ -266,7 +331,6 @@ export class Renderer {
 
   stop() {
     if (!this.running) return;
-    this._cancelled = !!this.recorder;
     this._finish();
   }
 
@@ -278,28 +342,14 @@ export class Renderer {
     await this.load(shot);
     const it = this.cache.get(shot.id);
     if (it && it.el && it.el.tagName === 'VIDEO') {
-      it.el.currentTime = Math.min(0.5, (it.el.duration || 1) / 2);
-      await new Promise(r => { it.el.onseeked = r; setTimeout(r, 1500); });
+      const target = this.clipTime(shot, it.el, Math.max(0, t - shot.start));
+      if (Math.abs(it.el.currentTime - target) > 0.05) { it.el.currentTime = target; await waitFor(it.el, 'seeked', 5000); }
     }
     this.ctx.fillStyle = '#000';
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     this.drawShot(i, t, 1);
     this.onTime(t, i);
   }
-}
-
-function drawCover(x, el, w, h, W, H, zoom = 1, panX = 0, panY = 0) {
-  if (!w || !h) return;
-  const s = Math.max(W / w, H / h) * zoom;
-  const dw = w * s, dh = h * s;
-  x.drawImage(el, (W - dw) / 2 + panX * W, (H - dh) / 2 + panY * H, dw, dh);
-}
-
-function drawContain(x, el, w, h, W, H, zoom = 1) {
-  if (!w || !h) return;
-  const s = Math.min(W / w, H / h) * zoom;
-  const dw = w * s, dh = h * s;
-  x.drawImage(el, (W - dw) / 2, (H - dh) / 2, dw, dh);
 }
 
 export function pickMime() {

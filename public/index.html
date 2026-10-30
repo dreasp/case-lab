@@ -49,6 +49,12 @@
           <label class="field">Title
             <input id="titleInput" placeholder="e.g. You have the right to remain silent">
           </label>
+          <label class="field">Format
+            <select id="formatInput">
+              <option value="16:9">16:9 · Long form (YouTube video)</option>
+              <option value="9:16">9:16 · Short (YouTube Shorts)</option>
+            </select>
+          </label>
           <div class="drops">
             <label class="drop" id="audioDrop">
               <input id="audioFile" type="file" accept=".aaf,.mp3,.wav,.m4a,audio/*" hidden>
@@ -75,11 +81,15 @@
               <p id="projectMeta" class="muted"></p>
             </div>
             <div class="head-actions">
+              <div id="formatSeg" class="seg" title="Video format">
+                <button data-aspect="16:9">16:9 Long form</button>
+                <button data-aspect="9:16">9:16 Short</button>
+              </div>
               <button id="deleteProject" class="btn ghost small">Delete project</button>
             </div>
           </div>
 
-          <div class="viewer">
+          <div class="viewer" id="viewer">
             <canvas id="canvas" width="1920" height="1080"></canvas>
             <div class="viewer-bar">
               <button id="playBtn" class="btn small">▶ Play</button>
@@ -141,6 +151,43 @@
     </form>
     <p id="swapStatus" class="status"></p>
     <div id="swapGrid" class="grid"></div>
+  </dialog>
+
+  <!-- Shot editor -->
+  <dialog id="editDialog" class="swap editor">
+    <div class="swap-head">
+      <div>
+        <div id="editTime" class="mono muted"></div>
+        <p id="editText" class="swap-text"></p>
+      </div>
+      <button id="editCancel" class="btn ghost small">Cancel</button>
+    </div>
+    <div class="editor-body">
+      <div class="editor-stage">
+        <canvas id="editCanvas" width="640" height="360"></canvas>
+        <p class="muted small-text">Drag the picture to choose which part stays on screen.</p>
+        <p id="editStatus" class="status"></p>
+      </div>
+      <div class="editor-controls">
+        <div id="trimBox" class="hidden">
+          <h4>Which part of the clip plays</h4>
+          <div class="trim-row"><span id="trimLabel" class="mono"></span>
+            <button id="trimPlay" class="btn small" type="button">▶ Play this shot</button></div>
+          <input id="trimRange" type="range" min="0" max="0" step="0.1" value="0">
+          <p id="trimInfo" class="muted small-text"></p>
+        </div>
+        <h4>Picture</h4>
+        <div id="modeSeg" class="seg">
+          <button data-mode="fill" type="button">Fill the frame</button>
+          <button data-mode="fit" type="button">Show the whole picture</button>
+        </div>
+        <h4>Zoom <span id="zoomLabel" class="mono muted"></span></h4>
+        <input id="zoomRange" type="range" min="1" max="3" step="0.01" value="1">
+        <button id="frameReset" class="btn ghost small" type="button">Reset framing</button>
+        <p class="muted small-text">Framing is saved separately for 16:9 and 9:16, so the same shot can be framed differently for a Short.</p>
+        <button id="editSave" class="btn primary block" type="button">Save</button>
+      </div>
+    </div>
   </dialog>
 
   <script src="/vendor/cfb.js"></script>

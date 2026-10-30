@@ -1,6 +1,6 @@
 import { store } from './store.js';
 import { readAAF, readAudio, readScript, buildTimeline, wordCountCheck } from './importer.js';
-import { Renderer } from './renderer.js';
+import { Renderer, drawMedia, mediaLayout, frameFor, SIZES } from './renderer.js';
 
 const $ = id => document.getElementById(id);
 const fmt = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = Math.floor(t % 60); return `${m}:${String(s).padStart(2, '0')}`; };
@@ -47,6 +47,8 @@ async function start() {
   const me = await api('me');
   if (!me.loggedIn) return showLogin();
   showApp();
+  // Ask the browser to keep this site's saved projects even when disk space runs low
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* not supported */ }
   const missing = [];
   if (!me.setup.gemini) missing.push('GEMINI_API_KEY');
   if (!me.setup.pixabay) missing.push('PIXABAY_API_KEY');
@@ -123,6 +125,7 @@ $('importBtn').addEventListener('click', async () => {
       id, title: $('titleInput').value.trim() || 'Untitled', created: Date.now(), updated: Date.now(),
       duration: audio.duration, paragraphs, clips: audio.clips, sentences, shots,
       timing: matched ? 'paragraphs' : 'estimated',
+      aspect: $('formatInput').value === '9:16' ? '9:16' : '16:9',
       note: audio.clips
         ? (matched
           ? `${paragraphs.length} paragraphs matched to ${audio.clips.length} ElevenLabs clips${fit !== null && fit < 0.8 ? ' (lengths look uneven, check the order)' : ''}.`
@@ -153,6 +156,7 @@ async function openProject(id) {
   for (const u of objectUrls.values()) URL.revokeObjectURL(u);
   objectUrls.clear();
   renderer.setProject(project.shots, audioBlob);
+  applyAspect();
   selectedShot = 0;
   $('importPanel').classList.add('hidden');
   $('projectPanel').classList.remove('hidden');
@@ -169,6 +173,7 @@ function renderHeader() {
   $('projectMeta').textContent = `${fmt(project.duration)} · ${project.sentences.length} sentences · ${project.shots.length} shots` +
     (empty ? ` · ${empty} need footage` : '') + ' · ' + project.note;
   $('timeLabel').textContent = `0:00 / ${fmt(project.duration)}`;
+  document.querySelectorAll('#formatSeg button').forEach(b => b.classList.toggle('active', b.dataset.aspect === aspectOf()));
   const anyPicked = project.sentences.some(s => s.pick);
   $('findBtn').textContent = anyPicked ? 'Find footage again for empty shots' : 'Find footage automatically';
 }
@@ -213,6 +218,10 @@ async function renderShots() {
       : (c.custom && c.type === 'video'
         ? `<video class="thumb" src="${th}" muted preload="metadata"></video>`
         : `<img class="thumb" src="${esc(th)}" alt="" loading="lazy">`);
+    const ed = shot.edit || {};
+    const edited = [];
+    if (ed.start) edited.push(`starts at ${fmt(ed.start)}`);
+    if (ed.frames && ed.frames[aspectOf()]) edited.push('framed');
     const why = sen && sen.pick && sen.pick.why && c && c.auto ? `<span class="why">${esc(sen.pick.why)}</span>` : '';
     const src = c ? `<span class="src">${c.custom ? 'Your file' : esc(c.source)} · ${c.type}</span>` : '';
     return `<li class="shot ${kind} ${i === selectedShot ? 'selected' : ''}" data-i="${i}">
@@ -220,10 +229,11 @@ async function renderShots() {
       <div class="shot-media">${media}<span class="dot ${kind}"></span></div>
       <div class="shot-body">
         <p>${shot.part > 0 ? '<em class="cont">continued</em> ' : ''}${esc(sen ? sen.text : '')}</p>
-        <div class="shot-meta">${src}${why}</div>
+        <div class="shot-meta">${src}${edited.length ? `<span class="edited">${edited.join(', ')}</span>` : ''}${why}</div>
       </div>
       <div class="shot-actions">
         <button class="btn small" data-act="swap">Swap</button>
+        ${c ? '<button class="btn small ghost" data-act="edit">Adjust</button>' : ''}
         <button class="btn small ghost" data-act="play">▶ From here</button>
       </div>
     </li>`;
@@ -237,6 +247,7 @@ $('shotList').addEventListener('click', e => {
   const act = e.target.dataset.act;
   selectShot(i);
   if (act === 'swap') openSwap(i);
+  else if (act === 'edit') openEditor(i);
   else if (act === 'play') playFrom(project.shots[i].start);
   else if (!renderer.running) renderer.showFrame(project.shots[i].start + 0.01).catch(() => {});
 });
@@ -263,10 +274,30 @@ const renderer = new Renderer($('canvas'), {
 });
 
 function clearCanvas() {
-  const x = $('canvas').getContext('2d');
+  const c = $('canvas'), x = c.getContext('2d');
   x.fillStyle = '#0b0b0d';
-  x.fillRect(0, 0, 1920, 1080);
+  x.fillRect(0, 0, c.width, c.height);
 }
+
+// ---------- format: 16:9 long form or 9:16 Short ----------
+function aspectOf() { return (project && project.aspect) || '16:9'; }
+
+function applyAspect() {
+  renderer.setAspect(aspectOf());
+  $('viewer').classList.toggle('portrait', aspectOf() === '9:16');
+  clearCanvas();
+}
+
+document.querySelectorAll('#formatSeg button').forEach(b => b.addEventListener('click', async () => {
+  if (!project || busy || b.dataset.aspect === aspectOf()) return;
+  renderer.stop();
+  project.aspect = b.dataset.aspect;
+  await save();
+  applyAspect();
+  renderHeader();
+  await renderShots();
+  renderer.showFrame(project.shots[selectedShot]?.start + 0.01 || 0).catch(() => {});
+}));
 
 async function mediaUrl(choice) {
   if (!choice) return null;
@@ -507,6 +538,8 @@ $('swapClear').addEventListener('click', async () => {
 
 async function afterSwap() {
   $('swapDialog').close();
+  // A new clip starts fresh: no start point or framing carried over
+  delete project.shots[swapIndex].edit;
   renderer.invalidate(project.shots[swapIndex].id);
   await save();
   renderHeader();
@@ -535,7 +568,7 @@ $('exportBtn').addEventListener('click', async () => {
     const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `${project.title.replace(/[^\w\s-]/g, '').trim() || 'case-lab'}.${ext}`;
+    a.download = `${project.title.replace(/[^\w\s-]/g, '').trim() || 'case-lab'}${aspectOf() === '9:16' ? ' (Short)' : ''}.${ext}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -568,3 +601,178 @@ $('creditsBtn').addEventListener('click', async () => {
 
 // ---------- go ----------
 start().catch(e => { console.error(e); showLogin(); });
+
+// ---------- shot editor: start point and framing ----------
+const ed = { i: -1, el: null, start: 0, frame: {}, raf: 0, playing: false, drag: null };
+
+async function openEditor(i) {
+  const shot = project.shots[i];
+  if (!shot.choice) return;
+  renderer.stop();
+  closeEditorMedia();
+  ed.i = i;
+  ed.start = (shot.edit && shot.edit.start) || 0;
+  ed.frame = { x: 0.5, y: 0.5, zoom: 1, mode: 'auto', ...frameFor(shot, aspectOf()) };
+  const sen = sentenceOf(shot);
+  const len = shot.end - shot.start;
+  $('editTime').textContent = `${fmt(shot.start)} to ${fmt(shot.end)} · ${len.toFixed(1)}s on screen · ${aspectOf() === '9:16' ? '9:16 Short' : '16:9'}`;
+  $('editText').textContent = sen ? sen.text : '';
+  const [W, H] = SIZES[aspectOf()];
+  const c = $('editCanvas');
+  c.width = W / 3; c.height = H / 3;
+  c.classList.toggle('portrait', aspectOf() === '9:16');
+  $('editStatus').textContent = 'Loading…';
+  $('trimBox').classList.add('hidden');
+  $('editDialog').showModal();
+
+  try {
+    const url = await mediaUrl(shot.choice);
+    if (shot.choice.type === 'video') {
+      const v = document.createElement('video');
+      v.muted = true; v.playsInline = true; v.preload = 'auto'; v.crossOrigin = 'anonymous';
+      v.src = url;
+      await new Promise((res, rej) => {
+        v.addEventListener('loadeddata', res, { once: true });
+        v.addEventListener('error', () => rej(new Error('This video could not be loaded.')), { once: true });
+        setTimeout(() => rej(new Error('This video is taking too long to load.')), 60000);
+      });
+      ed.el = v;
+      const d = v.duration || 0;
+      const max = Math.max(0, d - len);
+      $('trimRange').max = max.toFixed(1);
+      $('trimRange').value = Math.min(ed.start, max);
+      ed.start = +$('trimRange').value;
+      $('trimBox').classList.remove('hidden');
+      $('trimInfo').textContent = d < len
+        ? `This clip is ${d.toFixed(1)}s, shorter than the shot (${len.toFixed(1)}s), so it will loop.`
+        : `The clip is ${fmt(d)} long. Slide to choose which ${len.toFixed(1)} seconds play.`;
+      v.currentTime = ed.start;
+      updateTrimLabel();
+    } else {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = url;
+      await img.decode();
+      ed.el = img;
+    }
+    $('editStatus').textContent = '';
+    updateFrameControls();
+    drawEditor();
+  } catch (e) {
+    $('editStatus').textContent = e.message;
+  }
+}
+
+function drawEditor() {
+  cancelAnimationFrame(ed.raf);
+  const c = $('editCanvas'), x = c.getContext('2d');
+  const loop = () => {
+    if (!$('editDialog').open) return;
+    x.fillStyle = '#000';
+    x.fillRect(0, 0, c.width, c.height);
+    if (ed.el) drawMedia(x, ed.el, c.width, c.height, ed.frame);
+    if (ed.playing && ed.el && ed.el.tagName === 'VIDEO') {
+      const shot = project.shots[ed.i];
+      if (ed.el.currentTime >= ed.start + (shot.end - shot.start) || ed.el.ended) stopEditorPlay();
+    }
+    ed.raf = requestAnimationFrame(loop);
+  };
+  loop();
+}
+
+function updateTrimLabel() {
+  const shot = project.shots[ed.i];
+  const len = shot.end - shot.start;
+  $('trimLabel').textContent = `${fmt(ed.start)} to ${fmt(ed.start + len)}`;
+}
+
+function stopEditorPlay() {
+  ed.playing = false;
+  if (ed.el && ed.el.tagName === 'VIDEO') { ed.el.pause(); ed.el.currentTime = ed.start; }
+  $('trimPlay').textContent = '▶ Play this shot';
+}
+
+$('trimRange').addEventListener('input', () => {
+  ed.start = +$('trimRange').value;
+  if (ed.playing) stopEditorPlay();
+  if (ed.el) ed.el.currentTime = ed.start;
+  updateTrimLabel();
+});
+
+$('trimPlay').addEventListener('click', () => {
+  if (!ed.el || ed.el.tagName !== 'VIDEO') return;
+  if (ed.playing) return stopEditorPlay();
+  ed.el.currentTime = ed.start;
+  ed.el.play().catch(() => {});
+  ed.playing = true;
+  $('trimPlay').textContent = '■ Stop';
+});
+
+function updateFrameControls() {
+  const c = $('editCanvas');
+  const mode = ed.el ? mediaLayout(ed.el, c.width, c.height, ed.frame).mode : 'fill';
+  document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  $('zoomRange').value = ed.frame.zoom || 1;
+  $('zoomLabel').textContent = Math.round((ed.frame.zoom || 1) * 100) + '%';
+}
+
+document.querySelectorAll('#modeSeg button').forEach(b => b.addEventListener('click', () => {
+  ed.frame.mode = b.dataset.mode;
+  ed.frame.x = 0.5; ed.frame.y = 0.5;
+  updateFrameControls();
+}));
+
+$('zoomRange').addEventListener('input', () => {
+  ed.frame.zoom = +$('zoomRange').value;
+  updateFrameControls();
+});
+
+$('frameReset').addEventListener('click', () => {
+  ed.frame = { x: 0.5, y: 0.5, zoom: 1, mode: 'auto' };
+  updateFrameControls();
+});
+
+// Drag the picture to choose which part stays on screen
+const editCanvas = $('editCanvas');
+editCanvas.addEventListener('pointerdown', e => {
+  if (!ed.el) return;
+  editCanvas.setPointerCapture(e.pointerId);
+  ed.drag = { x: e.clientX, y: e.clientY, fx: ed.frame.x ?? 0.5, fy: ed.frame.y ?? 0.5 };
+});
+editCanvas.addEventListener('pointermove', e => {
+  if (!ed.drag || !ed.el) return;
+  const rect = editCanvas.getBoundingClientRect();
+  const scale = editCanvas.width / rect.width;
+  const { dw, dh } = mediaLayout(ed.el, editCanvas.width, editCanvas.height, ed.frame);
+  const slackX = editCanvas.width - dw, slackY = editCanvas.height - dh;
+  const clamp = v => Math.min(1, Math.max(0, v));
+  // Offset = slack * f, so moving the pointer by d changes f by d / slack
+  if (Math.abs(slackX) > 1) ed.frame.x = clamp(ed.drag.fx + (e.clientX - ed.drag.x) * scale / slackX);
+  if (Math.abs(slackY) > 1) ed.frame.y = clamp(ed.drag.fy + (e.clientY - ed.drag.y) * scale / slackY);
+});
+['pointerup', 'pointercancel'].forEach(t => editCanvas.addEventListener(t, () => { ed.drag = null; }));
+
+function closeEditorMedia() {
+  cancelAnimationFrame(ed.raf);
+  if (ed.el && ed.el.tagName === 'VIDEO') { ed.el.pause(); ed.el.removeAttribute('src'); ed.el.load(); }
+  ed.el = null;
+  ed.playing = false;
+}
+
+$('editCancel').addEventListener('click', () => { closeEditorMedia(); $('editDialog').close(); });
+$('editDialog').addEventListener('close', closeEditorMedia);
+
+$('editSave').addEventListener('click', async () => {
+  const shot = project.shots[ed.i];
+  const frames = { ...((shot.edit && shot.edit.frames) || {}) };
+  const f = ed.frame;
+  const isDefault = (f.mode || 'auto') === 'auto' && (f.zoom || 1) === 1 && (f.x ?? 0.5) === 0.5 && (f.y ?? 0.5) === 0.5;
+  if (isDefault) delete frames[aspectOf()]; else frames[aspectOf()] = { ...f };
+  shot.edit = { start: shot.choice.type === 'video' ? ed.start : 0, frames };
+  closeEditorMedia();
+  $('editDialog').close();
+  renderer.invalidate(shot.id);
+  await save();
+  await renderShots();
+  renderer.showFrame(shot.start + 0.01).catch(() => {});
+});

@@ -50,7 +50,7 @@ a { color: var(--gold); }
 .btn.small { padding: 6px 11px; font-size: 13px; }
 .btn.block { width: 100%; justify-content: center; }
 
-input, textarea {
+input, textarea, select {
   width: 100%; background: var(--bg); border: 1px solid var(--line); color: var(--text);
   border-radius: 8px; padding: 10px 12px; font: inherit;
 }
@@ -160,6 +160,23 @@ input:focus { outline: none; border-color: var(--gold); }
 .cand img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; }
 .cand figcaption { display: flex; justify-content: space-between; padding: 6px 8px; font-size: 12px; color: var(--muted); }
 
+/* Segmented buttons */
+.seg { display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 2px; gap: 2px; }
+.seg button { background: none; border: 0; color: var(--muted); padding: 6px 10px; border-radius: 6px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.seg button.active { background: var(--panel-2); color: var(--text); }
+.head-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.viewer.portrait canvas { max-height: 64vh; }
+.edited { color: var(--gold); }
+input[type=range] { padding: 0; accent-color: var(--gold); }
+
+/* Shot editor */
+.editor-body { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(240px, 1fr); gap: 22px; margin-top: 8px; }
+.editor-stage canvas { width: 100%; max-height: 60vh; object-fit: contain; background: #000; border-radius: 8px; cursor: grab; touch-action: none; display: block; }
+.editor-stage canvas:active { cursor: grabbing; }
+.editor-controls { display: grid; gap: 10px; align-content: start; }
+.editor-controls h4 { margin: 6px 0 0; }
+.trim-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
 /* Phones and small screens */
 @media (max-width: 860px) {
   .topbar { gap: 10px; padding: 10px 16px; flex-wrap: wrap; }
@@ -170,4 +187,6 @@ input:focus { outline: none; border-color: var(--gold); }
   .shot { grid-template-columns: 1fr; }
   .thumb { width: 100%; }
   .viewer { position: static; }
+  .editor-body { grid-template-columns: 1fr; }
+  .project-head { flex-direction: column; }
 }
