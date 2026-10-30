@@ -3,7 +3,8 @@
 
 const PIXABAY = () => process.env.PIXABAY_BASE || 'https://pixabay.com/api';
 const WIKI = () => process.env.WIKI_BASE || 'https://commons.wikimedia.org/w/api.php';
-const UA = 'CaseLab/1.0 (personal video research tool)';
+// Wikimedia asks every tool to name itself and give a contact link
+const UA = 'CaseLab/1.0 (https://github.com/dreasp/case-lab; personal research tool) node-fetch';
 // Some image servers refuse requests that don't look like a normal browser
 const BROWSER_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36',
@@ -109,6 +110,30 @@ async function pixabayById(type, id) {
   return h.largeImageURL || h.webformatURL || null;
 }
 
+// Wikimedia: one request at a time, at least 1.5 seconds apart, and wait when told to slow down
+let lastWiki = 0;
+let wikiChain = Promise.resolve();
+function wikiFetch(url) {
+  const run = wikiChain.then(async () => {
+    const waits = [5000, 15000, 30000];
+    for (let i = 0; ; i++) {
+      const gap = lastWiki + 1500 - Date.now();
+      if (gap > 0) await sleep(gap);
+      lastWiki = Date.now();
+      const r = await fetch(url, { headers: { 'User-Agent': UA, 'Api-User-Agent': UA, 'Accept': 'application/json' } });
+      if ((r.status === 429 || r.status >= 500) && i < waits.length) {
+        const after = Number(r.headers.get('retry-after')) * 1000;
+        await sleep(Math.min(after > 0 ? after : waits[i], 60000));
+        continue;
+      }
+      if (!r.ok) throw new Error(`Wikimedia error ${r.status}`);
+      return r.json();
+    }
+  });
+  wikiChain = run.catch(() => {});
+  return run;
+}
+
 const stripHtml = s => String(s || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
 
 async function wikimedia(q, n = 5) {
@@ -118,11 +143,7 @@ async function wikimedia(q, n = 5) {
     gsrnamespace: '6', gsrlimit: String(n * 2), prop: 'imageinfo',
     iiprop: 'url|size|mime|extmetadata', iiurlwidth: '1920',
   });
-  const data = await cached('w|' + q, async () => {
-    const r = await fetch(`${WIKI()}?${params}`, { headers: { 'User-Agent': UA } });
-    if (!r.ok) throw new Error(`Wikimedia error ${r.status}`);
-    return r.json();
-  });
+  const data = await cached('w|' + q, () => wikiFetch(`${WIKI()}?${params}`));
   const pages = Object.values((data.query && data.query.pages) || {}).sort((a, b) => (a.index || 0) - (b.index || 0));
   const out = [];
   for (const p of pages) {
