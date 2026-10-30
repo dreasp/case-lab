@@ -27,7 +27,7 @@ FULL SCRIPT (for context only):
 
 ${RULES}
 
-For each numbered sentence below, write search terms for free stock sites (Pixabay). Pixabay search works best with 1 to 3 plain keywords, so keep each query short and concrete, like "movie theater night", "vintage car", "police interrogation room", "supreme court building".
+For each numbered sentence below, write search terms for free stock sites (Pixabay). The footage will be searched as VIDEO first. Pixabay's video library is smaller than its photo library and matches best with 1 or 2 plain keywords, so keep each query short and concrete, like "movie theater", "vintage car", "interrogation room", "courthouse". Make the third query broad enough that videos will surely exist (like "police car", "city night", "judge gavel").
 
 Return a JSON array, one object per sentence:
 {"id": <same id>, "queries": [3 queries, most specific first, most general last], "prefer": "video" or "photo", "wiki": a Wikimedia Commons search for a real, named historical person, building, place or document mentioned in this sentence (for example "Earl Warren" or "Phoenix Arizona 1960s"), or null if there is none}
@@ -54,28 +54,35 @@ ${group.map(s => `${s.id}: ${s.text}`).join('\n')}`;
   }
 });
 
-// 2) Search the stock sites for each sentence
+// 2) Search the stock sites for each sentence: videos first, photos only as a backup
 router.post('/candidates', async (req, res) => {
   try {
     const shots = (req.body && req.body.shots) || [];
     const results = {};
+    const errors = new Set();
+    const safe = async p => { try { return await p; } catch (e) { if (/rate limit/i.test(e.message)) throw e; errors.add(e.message); return []; } };
     for (const s of shots.slice(0, 8)) {
       const seen = new Set();
-      const list = [];
-      const add = arr => { for (const c of arr) if (!seen.has(c.key)) { seen.add(c.key); list.push(c); } };
-      if (s.wiki) { try { add(await src.wikimedia(s.wiki, 3)); } catch (e) { /* skip */ } }
-      for (const q of s.queries || []) {
-        if (list.length >= 8) break;
-        try {
-          if (s.prefer === 'photo') { add(await src.pixabayPhotos(q, 4)); add(await src.pixabayVideos(q, 4)); }
-          else { add(await src.pixabayVideos(q, 6)); if (list.length < 6) add(await src.pixabayPhotos(q, 3)); }
-        } catch (e) {
-          if (/rate limit/i.test(e.message)) throw e;
+      const videos = [], photos = [], wiki = [];
+      const add = (to, arr) => { for (const c of arr) if (!seen.has(c.key)) { seen.add(c.key); to.push(c); } };
+      const queries = s.queries || [];
+      // Videos from every search term first
+      for (const q of queries) {
+        if (videos.length >= 7) break;
+        add(videos, await safe(src.pixabayVideos(q, 6)));
+      }
+      // Real historical people, places and documents from Wikimedia
+      if (s.wiki) add(wiki, await safe(src.wikimedia(s.wiki, 3)));
+      // Stock photos only when there are too few videos
+      if (videos.length < 3) {
+        for (const q of queries) {
+          if (photos.length >= 4) break;
+          add(photos, await safe(src.pixabayPhotos(q, 3)));
         }
       }
-      results[s.id] = list.slice(0, 9);
+      results[s.id] = [...videos, ...wiki, ...photos].slice(0, 10);
     }
-    res.json({ results });
+    res.json({ results, errors: [...errors] });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -100,7 +107,7 @@ router.post('/search', async (req, res) => {
 async function thumbData(url) {
   if (!src.allowedHost(url)) return null;
   try {
-    const r = await fetch(url, { headers: { 'User-Agent': src.UA } });
+    const r = await fetch(url, { headers: src.BROWSER_HEADERS });
     if (!r.ok) return null;
     const type = (r.headers.get('content-type') || 'image/jpeg').split(';')[0];
     if (!/^image\//.test(type)) return null;
@@ -119,7 +126,9 @@ For each SHOT you get the narration sentence and numbered candidate thumbnails f
 
 ${RULES}
 - Reject candidates with big watermarks, unrelated text overlays, or obviously wrong era or country when the sentence is clearly about a specific time and place.
-- Prefer moving video over photos when both fit equally well.
+- STRONGLY prefer moving VIDEO. Choose a photo only when no video reasonably fits the sentence.
+- Exception: a Wikimedia photo of the real, named person, building, place or document the sentence is about beats a generic video.
+- "alt" should also be a video whenever one fits.
 - A slightly generic but accurate visual is better than a specific but wrong one.
 - If no candidate fits, use -1.
 
@@ -128,12 +137,16 @@ Answer with a JSON array, one object per shot:
 
     for (const s of shots) {
       parts.push({ text: `\n=== SHOT ${s.id} (${Math.round(s.duration || 0)}s) ===\nNarration: "${s.text}"` });
-      const cands = (s.candidates || []).slice(0, 9);
-      const imgs = await Promise.all(cands.map(c => thumbData(c.thumb)));
+      const cands = (s.candidates || []).slice(0, 10);
+      const imgs = await Promise.all(cands.map(c => (c.thumb ? thumbData(c.thumb) : null)));
       cands.forEach((c, i) => {
-        if (!imgs[i]) return;
-        parts.push({ text: `Candidate ${i} (${c.type}${c.duration ? ', ' + c.duration + 's' : ''}, ${c.source}, tags: ${String(c.tags || '').slice(0, 80)}):` });
-        parts.push({ inline_data: imgs[i] });
+        const label = `Candidate ${i} (${c.type.toUpperCase()}${c.duration ? ', ' + c.duration + 's' : ''}, ${c.source}, tags: ${String(c.tags || '').slice(0, 80)})`;
+        if (imgs[i]) {
+          parts.push({ text: label + ':' });
+          parts.push({ inline_data: imgs[i] });
+        } else {
+          parts.push({ text: label + ': [no preview image, judge by the tags]' });
+        }
       });
     }
     const result = await generateJSON(parts, { temperature: 0.1 });
@@ -169,7 +182,7 @@ router.get('/media', async (req, res) => {
   const ac = new AbortController();
   res.on('close', () => ac.abort());
   try {
-    const headers = { 'User-Agent': src.UA };
+    const headers = { ...src.BROWSER_HEADERS };
     if (req.headers.range) headers.Range = req.headers.range;
     const r = await fetch(u, { headers, signal: ac.signal });
     res.status(r.status);
@@ -184,6 +197,34 @@ router.get('/media', async (req, res) => {
     if (!res.headersSent) res.status(502).send('Could not load media');
     else res.end();
   }
+});
+
+// Check page: open /api/check in the browser to see what each source answers
+router.get('/check', async (req, res) => {
+  const out = {
+    pixabayKey: src.pixabayKeyInfo(),
+    geminiKeySet: !!process.env.GEMINI_API_KEY,
+  };
+  const test = async (name, fn) => {
+    try {
+      const r = await fn();
+      const first = r[0] || {};
+      out[name] = { found: r.length, firstThumb: first.thumb || null };
+      if (first.thumb) out[name].thumbLoads = !!(await thumbData(first.thumb));
+      if (first.url) {
+        try {
+          const m = await fetch(first.url, { headers: { ...src.BROWSER_HEADERS, Range: 'bytes=0-1000' } });
+          out[name].fileLoads = m.ok;
+          out[name].fileStatus = m.status;
+        } catch (e) { out[name].fileLoads = false; out[name].fileError = e.message; }
+      }
+    } catch (e) { out[name] = { error: e.message }; }
+  };
+  await test('pixabayVideos', () => src.pixabayVideos('police car', 3));
+  await test('pixabayPhotos', () => src.pixabayPhotos('police car', 3));
+  await test('wikimedia', () => src.wikimedia('Supreme Court building', 2));
+  out.lastPixabayError = src.getLastPixabayError();
+  res.json(out);
 });
 
 module.exports = { router };

@@ -318,11 +318,13 @@ async function findFootage() {
   setBusy(true);
   cancelFlag = false;
   const script = project.paragraphs.join('\n\n');
+  const sourceErrors = new Set();
   try {
     // Re-run only for sentences whose shots are still empty and were not chosen by hand
     const needs = s => project.shots.some(sh => sh.sid === s.id && !sh.choice && !sh.leftEmpty);
     if (project.sentences.some(s => s.pick)) {
-      for (const s of project.sentences) if (needs(s) && s.pick && s.pick.best < 0) { delete s.pick; delete s.candidates; delete s.plan; }
+      // Keep the search terms (no extra AI cost), search again and let the AI pick again
+      for (const s of project.sentences) if (needs(s)) { delete s.pick; delete s.candidates; }
     }
     const todo = () => project.sentences.filter(s => !s.pick);
     const total = Math.max(1, todo().length);
@@ -343,6 +345,7 @@ async function findFootage() {
       progress(true, 0.1 + 0.5 * i / list.length, `Searching Pixabay and Wikimedia (${Math.min(i + 4, list.length)} of ${list.length})…`);
       const batch = list.slice(i, i + 4);
       const r = await api('candidates', { shots: batch.map(s => ({ id: s.id, ...s.plan })) });
+      for (const err of r.errors || []) sourceErrors.add(err);
       const now = Date.now();
       for (const s of batch) s.candidates = (r.results[s.id] || []).map(c => ({ ...c, fetchedAt: now }));
       await save();
@@ -385,6 +388,10 @@ async function findFootage() {
     if (cancelFlag) return;
     const empty = project.shots.filter(s => !s.choice).length;
     void total;
+    if (sourceErrors.size) {
+      alert('Some footage searches failed:\n\n' + [...sourceErrors].slice(0, 3).join('\n') +
+        '\n\nOpen /api/check on your site and send a screenshot so this can be fixed.');
+    }
     alert(empty ? `Done. ${empty} shots still need footage (marked red). Use Swap to search or upload your own.` : 'Done. Every shot has footage. Press Play to watch.');
     renderer.showFrame(0).catch(() => {});
   } catch (e) {

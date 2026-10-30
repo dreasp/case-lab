@@ -4,6 +4,15 @@
 const PIXABAY = () => process.env.PIXABAY_BASE || 'https://pixabay.com/api';
 const WIKI = () => process.env.WIKI_BASE || 'https://commons.wikimedia.org/w/api.php';
 const UA = 'CaseLab/1.0 (personal video research tool)';
+// Some image servers refuse requests that don't look like a normal browser
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36',
+  'Accept': '*/*',
+  'Referer': 'https://pixabay.com/',
+};
+const pixKey = () => String(process.env.PIXABAY_API_KEY || '').trim();
+// Last Pixabay problem, shown on the check page
+let lastPixabayError = null;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Pixabay asks that identical searches are cached for 24 hours
@@ -27,10 +36,18 @@ function pixabayFetch(url) {
     if (wait > 0) await sleep(wait);
     lastPixabay = Date.now();
     for (let i = 0; i < 3; i++) {
-      const r = await fetch(url);
+      const r = await fetch(url, { headers: { 'User-Agent': BROWSER_HEADERS['User-Agent'], 'Accept': 'application/json' } });
       if (r.status === 429) { await sleep(15000); continue; }
-      if (!r.ok) throw new Error(`Pixabay error ${r.status}`);
-      return r.json();
+      if (!r.ok) {
+        const body = (await r.text()).slice(0, 200).replace(/\s+/g, ' ');
+        lastPixabayError = `Pixabay error ${r.status}: ${body}`;
+        throw new Error(lastPixabayError);
+      }
+      const text = await r.text();
+      try { return JSON.parse(text); } catch (e) {
+        lastPixabayError = 'Pixabay sent something that is not JSON: ' + text.slice(0, 150).replace(/\s+/g, ' ');
+        throw new Error(lastPixabayError);
+      }
     }
     throw new Error('Pixabay rate limit reached. Try again in a minute.');
   });
@@ -43,7 +60,7 @@ function cleanQuery(q) {
 }
 
 async function pixabayVideos(q, n = 8) {
-  const key = process.env.PIXABAY_API_KEY;
+  const key = pixKey();
   if (!key || !q) return [];
   const url = `${PIXABAY()}/videos/?key=${key}&q=${encodeURIComponent(q)}&safesearch=true&per_page=${Math.max(3, n)}`;
   const data = await cached('v|' + q, () => pixabayFetch(url));
@@ -60,11 +77,11 @@ async function pixabayVideos(q, n = 8) {
       duration: h.duration, thumb, page: h.pageURL, tags: h.tags,
       credit: `Video by ${h.user || 'unknown'} from Pixabay`,
     };
-  }).filter(c => c.url && c.thumb).slice(0, n);
+  }).filter(c => c.url).slice(0, n);
 }
 
 async function pixabayPhotos(q, n = 6) {
-  const key = process.env.PIXABAY_API_KEY;
+  const key = pixKey();
   if (!key || !q) return [];
   const url = `${PIXABAY()}/?key=${key}&q=${encodeURIComponent(q)}&image_type=photo&safesearch=true&per_page=${Math.max(3, n)}`;
   const data = await cached('p|' + q, () => pixabayFetch(url));
@@ -79,7 +96,7 @@ async function pixabayPhotos(q, n = 6) {
 
 // Look up one Pixabay item again (photo links expire after a day)
 async function pixabayById(type, id) {
-  const key = process.env.PIXABAY_API_KEY;
+  const key = pixKey();
   const base = type === 'video' ? `${PIXABAY()}/videos/` : `${PIXABAY()}/`;
   const data = await cached(`id|${type}|${id}`, () => pixabayFetch(`${base}?key=${key}&id=${encodeURIComponent(id)}`));
   const h = (data.hits || [])[0];
@@ -140,4 +157,9 @@ function allowedHost(u) {
     host === 'upload.wikimedia.org' || host === 'i.vimeocdn.com' || extra.includes(host);
 }
 
-module.exports = { pixabayVideos, pixabayPhotos, pixabayById, wikimedia, allowedHost, cleanQuery, UA };
+function pixabayKeyInfo() {
+  const raw = String(process.env.PIXABAY_API_KEY || '');
+  return { set: !!raw.trim(), length: raw.trim().length, hadSpaces: raw !== raw.trim() };
+}
+
+module.exports = { pixabayKeyInfo, BROWSER_HEADERS, getLastPixabayError: () => lastPixabayError, pixabayVideos, pixabayPhotos, pixabayById, wikimedia, allowedHost, cleanQuery, UA };
