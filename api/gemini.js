@@ -3,13 +3,14 @@
 const MODEL = () => process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// One request at a time, at least 13 seconds apart, so the free tier's
-// 5-requests-per-minute limit is never hit.
+// One request at a time. Starts fast (paid tier allows 1,000 a minute); if Google ever says
+// "too many requests", it slows to one every 13 seconds (free tier: 5 a minute).
 let chain = Promise.resolve();
 let lastCall = 0;
+let minGap = 500;
 function queued(fn) {
   const run = chain.then(async () => {
-    const gap = lastCall + 13000 - Date.now();
+    const gap = lastCall + minGap - Date.now();
     if (gap > 0) await sleep(gap);
     lastCall = Date.now();
     return fn();
@@ -61,6 +62,7 @@ async function generateJSON(parts, { temperature = 0.3, images = false } = {}) {
         throw new GeminiError('Gemini free daily limit reached (20 requests a day on the free tier). It resets every morning around 8 to 9 Italian time. Your progress is saved: press the button again after that.', 'DAILY_LIMIT');
       }
       if ((r.status === 429 || r.status >= 500) && attempt < waits.length) {
+        if (r.status === 429) minGap = 13000;
         await sleep(waits[attempt]);
         continue;
       }
