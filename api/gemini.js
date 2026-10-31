@@ -1,5 +1,7 @@
 // Small helper for calling the Gemini API with automatic retries.
 
+const usage = require('./usage');
+
 const MODEL = () => process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -55,6 +57,7 @@ async function generateJSON(parts, { temperature = 0.3, images = false } = {}) {
           const why = data.promptFeedback?.blockReason || cand?.finishReason || 'unknown reason';
           throw new GeminiError(`Gemini returned an empty answer (${why}).`, 'BLOCKED');
         }
+        await usage.record(MODEL(), data.usageMetadata).catch(() => {});
         return parseJSON(text);
       }
       const errText = await r.text();

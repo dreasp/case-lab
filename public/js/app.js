@@ -57,6 +57,7 @@ async function start() {
   await refreshProjects();
   // Copy anything saved only in this browser up to the cloud
   syncAll().then(refreshProjects).catch(() => {});
+  refreshUsage();
   const list = await store.listProjects();
   if (list.length) await openProject(list[0].id); else showImport();
 }
@@ -466,6 +467,7 @@ async function findFootage() {
   } finally {
     setBusy(false);
     renderHeader();
+    refreshUsage();
   }
 }
 
@@ -1000,3 +1002,26 @@ $('titleEdit').addEventListener('submit', async e => {
 });
 $('titleEditCancel').addEventListener('click', () => renderHeader());
 $('titleEditInput').addEventListener('keydown', e => { if (e.key === 'Escape') renderHeader(); });
+
+// ---------- AI cost counter ----------
+let usageInfo = null;
+async function refreshUsage() {
+  try {
+    usageInfo = await api('usage');
+    const usd = usageInfo.estimatedUSD;
+    $('aiUsage').textContent = `AI this month: $${usd < 0.01 && usd > 0 ? '<0.01' : usd.toFixed(2)}`;
+  } catch (e) { /* not important enough to show an error */ }
+}
+$('aiUsage').addEventListener('click', () => {
+  if (!usageInfo) return;
+  const [y, m] = usageInfo.month.split('-');
+  const name = new Date(+y, +m - 1, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
+  alert(`AI use in ${name}\n\n` +
+    `Estimated cost: $${usageInfo.estimatedUSD.toFixed(4)} (US dollars)\n` +
+    `AI requests: ${usageInfo.requests}\n` +
+    `Tokens read (text + images): ${usageInfo.inputTokens.toLocaleString('en-GB')}\n` +
+    `Tokens written: ${usageInfo.outputTokens.toLocaleString('en-GB')}\n\n` +
+    `Only "Find footage" uses the AI. Searching, previewing and exporting are free.\n` +
+    `This is an estimate from Google's published prices. Your exact bill is in Google AI Studio > Spend.` +
+    (usageInfo.saved ? '' : '\n\n(Not saved permanently: the count restarts when the server restarts.)'));
+});

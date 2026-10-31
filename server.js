@@ -18,6 +18,8 @@ if (fs.existsSync(envPath)) {
 const auth = require('./api/auth');
 const broll = require('./api/broll');
 const cloud = require('./api/cloud');
+const usage = require('./api/usage');
+usage.setDb(cloud.db);
 
 const app = express();
 app.set('trust proxy', 1);
@@ -36,6 +38,7 @@ app.get('/vendor/mp4-muxer.js', (req, res) =>
 app.use('/api', auth.router);
 app.use('/api', auth.requireLogin, broll.router);
 app.use('/api', auth.requireLogin, cloud.router);
+app.use('/api', auth.requireLogin, usage.router);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.json({ ok: true }));
