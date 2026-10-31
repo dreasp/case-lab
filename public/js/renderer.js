@@ -2,7 +2,7 @@
 // Everything here runs in the browser, so the free server does no video work.
 
 const FADE = 0.35;      // crossfade length in seconds
-const LOOKAHEAD = 20;   // seconds of footage prepared ahead of the playhead
+const LOOKAHEAD = 12;   // seconds of footage prepared ahead of the playhead (browsers can only decode a few videos at once)
 
 export const SIZES = { '16:9': [1920, 1080], '9:16': [1080, 1920] };
 
@@ -55,6 +55,48 @@ export function frameFor(shot, aspect) {
   return (shot.edit && shot.edit.frames && shot.edit.frames[aspect]) || {};
 }
 
+// Try each address in turn (direct from the stock site first, then through our server),
+// so one refused request doesn't leave a shot empty.
+export async function loadVideo(sources, timeoutMs = 45000) {
+  let lastErr = null;
+  for (const src of sources) {
+    if (src.delay) await new Promise(r => setTimeout(r, src.delay));
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'auto';
+    v.crossOrigin = 'anonymous';
+    try {
+      await new Promise((res, rej) => {
+        const t = setTimeout(() => rej(new Error('timeout')), timeoutMs);
+        v.addEventListener('loadeddata', () => { clearTimeout(t); res(); }, { once: true });
+        v.addEventListener('error', () => { clearTimeout(t); rej(new Error('error ' + (v.error && v.error.code))); }, { once: true });
+        v.src = src.url;
+      });
+      return v;
+    } catch (e) {
+      lastErr = e;
+      v.removeAttribute('src'); v.load();
+    }
+  }
+  throw lastErr || new Error('no source');
+}
+
+export async function loadImage(sources) {
+  let lastErr = null;
+  for (const src of sources) {
+    if (src.delay) await new Promise(r => setTimeout(r, src.delay));
+    try {
+      const r = await fetch(src.url, { mode: 'cors' });
+      if (!r.ok) throw new Error('status ' + r.status);
+      const url = URL.createObjectURL(await r.blob());
+      const img = new Image();
+      img.src = url;
+      try { await img.decode(); } catch (e) { URL.revokeObjectURL(url); throw e; }
+      return { img, url };
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('no source');
+}
+
 const waitFor = (el, evt, ms) => new Promise(res => {
   const t = setTimeout(res, ms);
   el.addEventListener(evt, () => { clearTimeout(t); res(); }, { once: true });
@@ -64,7 +106,7 @@ export class Renderer {
   constructor(canvas, { mediaUrl, onTime, onState }) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.mediaUrl = mediaUrl;          // async (shot) => url string or null
+    this.mediaUrl = mediaUrl;          // async (shot) => list of { url, delay } to try, or null
     this.onTime = onTime || (() => {});
     this.onState = onState || (() => {});
     this.cache = new Map();            // shot.id -> {status, el, url}
@@ -107,30 +149,19 @@ export class Renderer {
     item.ready = (async () => {
       try {
         if (!shot.choice) { item.status = 'empty'; return item; }
-        const url = await this.mediaUrl(shot);
-        if (!url) throw new Error('no url');
+        const sources = await this.mediaUrl(shot);
+        if (!sources || !sources.length) throw new Error('no url');
         if (shot.choice.type === 'video') {
-          const v = document.createElement('video');
-          v.muted = true; v.playsInline = true; v.preload = 'auto'; v.loop = true;
-          v.crossOrigin = 'anonymous';
-          v.src = url;
-          await new Promise((res, rej) => {
-            const t = setTimeout(() => rej(new Error('video timeout')), 60000);
-            v.addEventListener('loadeddata', () => { clearTimeout(t); res(); }, { once: true });
-            v.addEventListener('error', () => { clearTimeout(t); rej(new Error('video error')); }, { once: true });
-          });
+          const v = await loadVideo(sources);
+          v.loop = true;
           // Jump to the chosen start point now, so the shot starts instantly later
           const target = this.clipTime(shot, v, 0);
           if (Math.abs(v.currentTime - target) > 0.05) { v.currentTime = target; await waitFor(v, 'seeked', 15000); }
           item.el = v;
           item.url = null;
         } else {
-          const r = await fetch(url);
-          if (!r.ok) throw new Error('fetch ' + r.status);
-          item.url = URL.createObjectURL(await r.blob());
-          const img = new Image();
-          img.src = item.url;
-          await img.decode();
+          const { img, url } = await loadImage(sources);
+          item.url = url;
           item.el = img;
         }
         item.status = 'ready';

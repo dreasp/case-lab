@@ -1,6 +1,6 @@
 import { cloudStore as store, syncAll, onSync } from './cloud.js';
 import { readAAF, readAudio, readScript, buildTimeline, wordCountCheck } from './importer.js';
-import { Renderer, drawMedia, mediaLayout, frameFor, SIZES } from './renderer.js';
+import { Renderer, drawMedia, mediaLayout, frameFor, SIZES, loadVideo, loadImage } from './renderer.js';
 
 const $ = id => document.getElementById(id);
 const fmt = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = Math.floor(t % 60); return `${m}:${String(s).padStart(2, '0')}`; };
@@ -264,7 +264,7 @@ function selectShot(i) {
 
 // ---------- player ----------
 const renderer = new Renderer($('canvas'), {
-  mediaUrl: shot => mediaUrl(shot.choice),
+  mediaUrl: shot => mediaSources(shot.choice),
   onTime: (t, i) => {
     $('timeLabel').textContent = `${fmt(t)} / ${fmt(project ? project.duration : 0)}`;
     if (i !== selectedShot && renderer.running) {
@@ -323,6 +323,32 @@ async function mediaUrl(choice) {
   }
   const u = choice.type === 'video' ? (choice.urlSmall || choice.url) : choice.url;
   return '/api/media?u=' + encodeURIComponent(u) + (choice.fallback ? '&f=' + encodeURIComponent(choice.fallback) : '');
+}
+
+// Addresses to try for a clip: straight from the stock site first (fast, no server limits),
+// then through our server, then through our server again after a short pause.
+async function mediaSources(choice) {
+  if (!choice) return null;
+  const proxied = await mediaUrl(choice);
+  if (!proxied) return null;
+  if (choice.custom) return [{ url: proxied }];
+  const direct = choice.type === 'video' ? (choice.urlSmall || choice.url) : choice.url;
+  const list = [];
+  if (direct) list.push({ url: direct });
+  list.push({ url: proxied }, { url: proxied + '&retry=1', delay: 2500 });
+  return list;
+}
+
+// Plain-language reason when a clip won't load
+async function whyNotLoading(choice) {
+  if (choice.custom) return 'Chrome could not open this file right now. Close this window and try again. If it keeps happening, the file may be too large (4K) or in a format Chrome can\'t read: download the Full HD MP4 version (on Pexels, pick 1920x1080) and upload that instead.';
+  try {
+    const r = await fetch(await mediaUrl(choice), { headers: { Range: 'bytes=0-1' } });
+    if (r.status === 429) return 'The stock site is limiting requests right now. Wait a minute and try again.';
+    if (r.status === 404 || r.status === 410) return 'This clip has been removed from the stock site. Please swap it for another one.';
+    if (!r.ok) return `The stock site answered with an error (${r.status}). Try again in a minute, or swap the clip.`;
+  } catch (e) { /* fall through */ }
+  return 'This video could not be loaded. Try again in a minute, or swap the clip.';
 }
 
 async function playFrom(t) {
@@ -522,15 +548,56 @@ $('swapSearch').addEventListener('submit', async e => {
   } catch (err) { $('swapStatus').textContent = err.message; }
 });
 
+// Check a video file before using it: can the browser play it, and how big is it?
+async function probeVideo(file) {
+  const url = URL.createObjectURL(file);
+  const v = document.createElement('video');
+  v.muted = true; v.preload = 'metadata';
+  try {
+    await new Promise((res, rej) => {
+      v.addEventListener('loadedmetadata', res, { once: true });
+      v.addEventListener('error', () => rej(new Error('unplayable')), { once: true });
+      setTimeout(() => rej(new Error('timeout')), 20000);
+      v.src = url;
+    });
+    return { ok: true, w: v.videoWidth, h: v.videoHeight };
+  } catch (e) {
+    return { ok: false };
+  } finally {
+    v.removeAttribute('src'); v.load(); URL.revokeObjectURL(url);
+  }
+}
+
+// Same file uploaded twice (for two shots) is stored once
+function fileId(f) {
+  let h = 0;
+  for (const ch of `${f.name}|${f.size}|${f.lastModified}`) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h.toString(36) + f.size.toString(36);
+}
+
 $('swapUpload').addEventListener('change', async e => {
   const f = e.target.files[0];
   if (!f) return;
-  const key = `${project.id}:u:${Date.now().toString(36)}`;
-  await store.putFile(key, f);
+  e.target.value = '';
+  if (f.type.startsWith('video')) {
+    $('swapStatus').textContent = 'Checking the video…';
+    const info = await probeVideo(f);
+    if (!info.ok) {
+      $('swapStatus').textContent = '';
+      alert(`Chrome can't play "${f.name}". It's probably in a format like HEVC or ProRes. Download the MP4 version (Pexels: choose HD 1920x1080) or convert it to MP4, then upload again.`);
+      return;
+    }
+    if (Math.max(info.w, info.h) > 2000 &&
+      !confirm(`"${f.name}" is ${info.w}x${info.h} (4K or bigger). Very large clips can fail to load or make playback stutter, because the browser can only open a few at once.\n\nTip: on Pexels, use the download arrow and pick Full HD (1920x1080).\n\nUse this file anyway?`)) {
+      $('swapStatus').textContent = '';
+      return;
+    }
+  }
+  const key = `${project.id}:u:${fileId(f)}`;
+  if (!(await store.getFile(key))) await store.putFile(key, f);
   const shot = project.shots[swapIndex];
   shot.choice = { custom: key, key, type: f.type.startsWith('video') ? 'video' : 'photo', name: f.name, source: 'Your file', auto: false };
   shot.leftEmpty = false;
-  e.target.value = '';
   await afterSwap();
 });
 
@@ -614,6 +681,8 @@ async function openEditor(i) {
   const shot = project.shots[i];
   if (!shot.choice) return;
   renderer.stop();
+  // Free the preview's videos first: browsers can only decode a few videos at once
+  renderer.releaseAll();
   closeEditorMedia();
   ed.i = i;
   ed.start = (shot.edit && shot.edit.start) || 0;
@@ -631,16 +700,12 @@ async function openEditor(i) {
   $('editDialog').showModal();
 
   try {
-    const url = await mediaUrl(shot.choice);
+    const sources = await mediaSources(shot.choice);
     if (shot.choice.type === 'video') {
-      const v = document.createElement('video');
-      v.muted = true; v.playsInline = true; v.preload = 'auto'; v.crossOrigin = 'anonymous';
-      v.src = url;
-      await new Promise((res, rej) => {
-        v.addEventListener('loadeddata', res, { once: true });
-        v.addEventListener('error', () => rej(new Error('This video could not be loaded.')), { once: true });
-        setTimeout(() => rej(new Error('This video is taking too long to load.')), 60000);
-      });
+      let v;
+      try { v = await loadVideo(sources); }
+      catch (e) { throw new Error(await whyNotLoading(shot.choice)); }
+      if (ed.i !== i || !$('editDialog').open) { v.removeAttribute('src'); v.load(); return; }
       ed.el = v;
       const d = v.duration || 0;
       const max = Math.max(0, d - len);
@@ -654,11 +719,10 @@ async function openEditor(i) {
       v.currentTime = ed.start;
       updateTrimLabel();
     } else {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.src = url;
-      await img.decode();
-      ed.el = img;
+      let res;
+      try { res = await loadImage(sources); }
+      catch (e) { throw new Error(await whyNotLoading(shot.choice)); }
+      ed.el = res.img;
     }
     $('editStatus').textContent = '';
     updateFrameControls();

@@ -204,7 +204,7 @@ router.get('/media', async (req, res) => {
     let r;
     // Try the main link (waiting a little if the site says "too many requests"), then the backup link
     outer: for (const u of urls) {
-      for (const wait of [0, 2000, 5000]) {
+      for (const wait of [0, 1500, 4000, 8000]) {
         if (wait) await sleep(wait);
         r = await fetch(u, { headers, signal: ac.signal });
         if (r.ok) break outer;
