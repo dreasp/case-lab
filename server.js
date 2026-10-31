@@ -28,6 +28,10 @@ app.get('/vendor/cfb.js', (req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/cfb/dist/cfb.min.js')));
 app.get('/vendor/mammoth.js', (req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/mammoth/mammoth.browser.min.js')));
+app.get('/vendor/mp4box.js', (req, res) =>
+  res.sendFile(path.join(__dirname, 'node_modules/mp4box/dist/mp4box.all.min.js')));
+app.get('/vendor/mp4-muxer.js', (req, res) =>
+  res.sendFile(path.join(__dirname, 'node_modules/mp4-muxer/build/mp4-muxer.js')));
 
 app.use('/api', auth.router);
 app.use('/api', auth.requireLogin, broll.router);

@@ -6,50 +6,9 @@ const LOOKAHEAD = 12;   // seconds of footage prepared ahead of the playhead (br
 
 export const SIZES = { '16:9': [1920, 1080], '9:16': [1080, 1920] };
 
-// ---------- drawing helpers (also used by the shot editor) ----------
-const blurCanvas = document.createElement('canvas');
-
-// How a picture is placed. frame = { x, y, zoom, mode } where x/y (0..1) pick which part stays
-// visible when cropping, zoom >= 1, and mode is 'fill' (crop to fill), 'fit' (whole picture,
-// blurred sides) or 'auto'.
-export function mediaLayout(el, W, H, frame = {}, extraZoom = 1) {
-  const w = el.videoWidth || el.naturalWidth || el.width;
-  const h = el.videoHeight || el.naturalHeight || el.height;
-  let mode = frame.mode || 'auto';
-  if (mode === 'auto') {
-    // Photos with a very different shape are shown whole; videos fill the frame
-    const ratio = (w / h) / (W / H);
-    mode = el.tagName !== 'VIDEO' && (ratio < 0.8 || ratio > 1.25) ? 'fit' : 'fill';
-  }
-  const zoom = (frame.zoom || 1) * extraZoom;
-  const s = (mode === 'fit' ? Math.min(W / w, H / h) : Math.max(W / w, H / h)) * zoom;
-  return { w, h, mode, dw: w * s, dh: h * s };
-}
-
-export function drawMedia(x, el, W, H, frame = {}, extraZoom = 1) {
-  const { w, h, mode } = mediaLayout(el, W, H, frame, extraZoom);
-  if (!w || !h) return;
-  const fx = frame.x ?? 0.5, fy = frame.y ?? 0.5;
-  const zoom = (frame.zoom || 1) * extraZoom;
-  if (mode === 'fit') {
-    // Soft blurred copy behind, whole picture on top
-    const bw = W >= H ? 192 : 108, bh = W >= H ? 108 : 192;
-    blurCanvas.width = bw; blurCanvas.height = bh;
-    const b = blurCanvas.getContext('2d');
-    b.filter = 'blur(6px) brightness(0.5)';
-    const sb = Math.max(bw / w, bh / h) * 1.2;
-    b.drawImage(el, (bw - w * sb) / 2, (bh - h * sb) / 2, w * sb, h * sb);
-    x.imageSmoothingEnabled = true;
-    x.drawImage(blurCanvas, 0, 0, W, H);
-    const s = Math.min(W / w, H / h) * zoom;
-    const dw = w * s, dh = h * s;
-    x.drawImage(el, (W - dw) * fx, (H - dh) * fy, dw, dh);
-  } else {
-    const s = Math.max(W / w, H / h) * zoom;
-    const dw = w * s, dh = h * s;
-    x.drawImage(el, (W - dw) * fx, (H - dh) * fy, dw, dh);
-  }
-}
+// ---------- drawing helpers (shared with the shot editor and the export worker, see draw.js) ----------
+export const mediaLayout = (...a) => window.CaseDraw.mediaLayout(...a);
+export const drawMedia = (...a) => window.CaseDraw.drawMedia(...a);
 
 export function frameFor(shot, aspect) {
   return (shot.edit && shot.edit.frames && shot.edit.frames[aspect]) || {};

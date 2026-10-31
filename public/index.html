@@ -78,7 +78,15 @@
         <div id="projectPanel" class="hidden">
           <div class="project-head">
             <div>
-              <h2 id="projectTitle"></h2>
+              <div class="title-row">
+                <h2 id="projectTitle" title="Double-click to rename"></h2>
+                <form id="titleEdit" class="title-edit hidden">
+                  <input id="titleEditInput" maxlength="150" aria-label="Project title">
+                  <button class="btn small primary" type="submit">Save</button>
+                  <button id="titleEditCancel" class="btn small ghost" type="button">Cancel</button>
+                </form>
+                <button id="renameBtn" class="btn ghost small" type="button">Rename</button>
+              </div>
               <p id="projectMeta" class="muted"></p>
             </div>
             <div class="head-actions">
@@ -191,6 +199,7 @@
     </div>
   </dialog>
 
+  <script src="/js/draw.js"></script>
   <script src="/vendor/cfb.js"></script>
   <script src="/vendor/mammoth.js"></script>
   <script type="module" src="/js/app.js"></script>

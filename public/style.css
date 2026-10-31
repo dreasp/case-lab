@@ -160,6 +160,12 @@ input:focus { outline: none; border-color: var(--gold); }
 .cand img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; }
 .cand figcaption { display: flex; justify-content: space-between; padding: 6px 8px; font-size: 12px; color: var(--muted); }
 
+/* Rename */
+.title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.title-row h2 { margin: 0; cursor: text; }
+.title-edit { display: flex; gap: 8px; align-items: center; flex: 1; min-width: 260px; }
+.title-edit input { font-size: 18px; font-weight: 600; }
+
 /* Cloud save indicator */
 .sync { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
 .sync::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); display: none; }

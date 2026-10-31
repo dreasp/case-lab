@@ -174,6 +174,8 @@ async function openProject(id) {
 
 function renderHeader() {
   $('projectTitle').textContent = project.title;
+  $('projectTitle').classList.remove('hidden');
+  $('titleEdit').classList.add('hidden');
   const empty = project.shots.filter(s => !s.choice).length;
   $('projectMeta').textContent = `${fmt(project.duration)} · ${project.sentences.length} sentences · ${project.shots.length} shots` +
     (empty ? ` · ${empty} need footage` : '') + ' · ' + project.note;
@@ -364,7 +366,7 @@ function progress(show, frac = 0, text = '') {
   $('progressFill').style.width = Math.round(frac * 100) + '%';
   $('progressText').textContent = text;
 }
-$('cancelBtn').addEventListener('click', () => { cancelFlag = true; renderer.stop(); });
+$('cancelBtn').addEventListener('click', () => { cancelFlag = true; renderer.stop(); if (exportWorker) exportWorker.postMessage({ type: 'cancel' }); });
 
 function setBusy(b) {
   busy = b;
@@ -620,10 +622,127 @@ async function afterSwap() {
 }
 
 // ---------- export ----------
+// Full-quality export: built frame by frame in a background worker from full-resolution
+// clips, so you can use other tabs and apps while it runs.
+const BITRATE = { '16:9': 16_000_000, '9:16': 16_000_000 };
+
+function exportName() {
+  return `${project.title.replace(/[^\w\s-]/g, '').trim() || 'case-lab'}${aspectOf() === '9:16' ? ' (Short)' : ''}.mp4`;
+}
+
+// Full-resolution addresses for a clip (the preview uses lighter versions)
+async function exportSources(choice) {
+  await mediaUrl(choice); // refreshes old Pixabay links if needed
+  const full = choice.url || choice.urlSmall;
+  const proxy = u => '/api/media?u=' + encodeURIComponent(u) + (choice.fallback ? '&f=' + encodeURIComponent(choice.fallback) : '');
+  const list = [{ url: full }, { url: proxy(full) }, { url: proxy(full) + '&retry=1', delay: 3000 }];
+  if (choice.urlSmall && choice.urlSmall !== full) list.push({ url: proxy(choice.urlSmall) }); // last resort
+  return list;
+}
+
+// Narration as 48 kHz mono samples (the standard for YouTube)
+async function narration48k() {
+  const ctx = new AudioContext();
+  const decoded = await ctx.decodeAudioData(await audioBlob.arrayBuffer());
+  ctx.close();
+  const off = new OfflineAudioContext(1, Math.ceil(decoded.duration * 48000), 48000);
+  const src = off.createBufferSource();
+  src.buffer = decoded;
+  src.connect(off.destination);
+  src.start();
+  return (await off.startRendering()).getChannelData(0);
+}
+
+let exportWorker = null;
+
 $('exportBtn').addEventListener('click', async () => {
   if (!project || busy) return;
+  if (!window.VideoEncoder || !window.OffscreenCanvas) return legacyExport();
+
+  // Ask where to save first, so the file is written straight to disk as it's built
+  let fileHandle = null;
+  if (window.showSaveFilePicker) {
+    try {
+      fileHandle = await window.showSaveFilePicker({
+        suggestedName: exportName(),
+        types: [{ description: 'MP4 video', accept: { 'video/mp4': ['.mp4'] } }],
+      });
+    } catch (e) {
+      if (e.name === 'AbortError') return; // you closed the save window
+      fileHandle = null;
+    }
+  }
+
+  renderer.stop();
+  setBusy(true);
+  cancelFlag = false;
   const empty = project.shots.filter(s => !s.choice).length;
-  const msg = `Export "${project.title}"?\n\nThe video is built in real time, so this takes about ${fmt(project.duration)}. Keep this tab open and in front the whole time (don't switch tabs or minimize).` +
+  const baseTitle = document.title;
+  // Holding a lock keeps Chrome from putting this tab to sleep while exporting
+  let releaseLock = null;
+  try { if (navigator.locks) navigator.locks.request('case-lab-export', () => new Promise(r => { releaseLock = r; })); } catch (e) { /* not supported */ }
+  try {
+    progress(true, 0, 'Preparing clips…');
+    const aspect = aspectOf();
+    const shots = [];
+    for (const s of project.shots) {
+      const c = s.choice;
+      const item = { start: s.start, end: s.end, edit: s.edit || null, frame: frameFor(s, aspect), type: c ? c.type : null };
+      if (c && c.custom) item.blob = await store.getFile(c.custom);
+      else if (c) item.sources = await exportSources(c);
+      shots.push(item);
+    }
+    progress(true, 0, 'Preparing narration…');
+    const audio = await narration48k();
+    if (cancelFlag) return;
+
+    const result = await new Promise((resolve, reject) => {
+      exportWorker = new Worker('/js/export-worker.js');
+      exportWorker.onmessage = ({ data }) => {
+        if (data.type === 'progress') {
+          progress(true, data.frac, data.text + ' · you can use other tabs and apps meanwhile');
+          document.title = `${Math.round(data.frac * 100)}% · Exporting · Case Lab`;
+        } else if (data.type === 'done') resolve(data);
+        else if (data.type === 'cancelled') resolve(null);
+        else if (data.type === 'error') reject(new Error(data.message));
+      };
+      exportWorker.onerror = e => reject(new Error(e.message || 'Export stopped unexpectedly'));
+      const job = { aspect, duration: project.duration, shots, audio, fileHandle, bitrate: BITRATE[aspect] };
+      exportWorker.postMessage({ type: 'start', job }, [audio.buffer]);
+    });
+    progress(false);
+    if (!result) return;
+
+    if (result.blob) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(result.blob);
+      a.download = exportName();
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 120000);
+    }
+    const notes = [];
+    if (result.problems && result.problems.length) notes.push(`${result.problems.length} clip(s) could not be loaded and kept the previous picture:\n` + result.problems.slice(0, 5).join('\n'));
+    if (empty) notes.push(`${empty} shot(s) had no footage and are black.`);
+    alert(`Export finished in ${fmt(result.seconds)}${fileHandle ? ` and saved as "${fileHandle.name}"` : ''}.` + (notes.length ? '\n\n' + notes.join('\n\n') : ''));
+  } catch (e) {
+    progress(false);
+    alert('Export problem: ' + e.message);
+  } finally {
+    if (exportWorker) { exportWorker.terminate(); exportWorker = null; }
+    if (releaseLock) releaseLock();
+    document.title = baseTitle;
+    setBusy(false);
+  }
+});
+
+window.addEventListener('beforeunload', e => { if (exportWorker) { e.preventDefault(); e.returnValue = ''; } });
+
+// Old method (records the preview in real time) for browsers without the needed features
+async function legacyExport() {
+  const empty = project.shots.filter(s => !s.choice).length;
+  const msg = `Export "${project.title}"?\n\nThis browser doesn't support the full-quality export, so the video is recorded in real time (about ${fmt(project.duration)}). Keep this tab in front the whole time.` +
     (empty ? `\n\n${empty} shots have no footage and will show the previous picture or black.` : '');
   if (!confirm(msg)) return;
   setBusy(true);
@@ -640,7 +759,7 @@ $('exportBtn').addEventListener('click', async () => {
     const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `${project.title.replace(/[^\w\s-]/g, '').trim() || 'case-lab'}${aspectOf() === '9:16' ? ' (Short)' : ''}.${ext}`;
+    a.download = exportName().replace(/\.mp4$/, '.' + ext);
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -651,7 +770,7 @@ $('exportBtn').addEventListener('click', async () => {
   } finally {
     setBusy(false);
   }
-});
+}
 
 // ---------- credits ----------
 $('creditsBtn').addEventListener('click', async () => {
@@ -861,3 +980,23 @@ onSync(({ state, error }) => {
   el.className = 'sync ' + cls;
   el.title = error || '';
 });
+
+// ---------- rename project ----------
+function startRename() {
+  if (!project) return;
+  $('titleEditInput').value = project.title;
+  $('projectTitle').classList.add('hidden');
+  $('titleEdit').classList.remove('hidden');
+  $('titleEditInput').focus();
+  $('titleEditInput').select();
+}
+$('renameBtn').addEventListener('click', startRename);
+$('projectTitle').addEventListener('dblclick', startRename);
+$('titleEdit').addEventListener('submit', async e => {
+  e.preventDefault();
+  const t = $('titleEditInput').value.trim();
+  if (t && t !== project.title) { project.title = t; await save(); await refreshProjects(); }
+  renderHeader();
+});
+$('titleEditCancel').addEventListener('click', () => renderHeader());
+$('titleEditInput').addEventListener('keydown', e => { if (e.key === 'Escape') renderHeader(); });
