@@ -16,6 +16,7 @@
     "aws4fetch": "^1.0.20",
     "cfb": "1.2.2",
     "express": "4.21.2",
+    "jsonrepair": "^3.13.1",
     "mammoth": "1.8.0",
     "mp4-muxer": "^5.2.1",
     "mp4box": "^0.5.3",

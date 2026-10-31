@@ -167,6 +167,9 @@ Return JSON:
       { text: prompt },
     ];
     const out = await generateJSON(parts, { temperature: 0.2, images: true });
+    // a cut-off answer can end with a half-written item: drop those
+    if (out && Array.isArray(out.moments)) out.moments = out.moments.filter(m => m && m.title && m.start != null && m.end != null);
+    if (out && Array.isArray(out.events)) out.events = out.events.filter(e => e && (e.what || e.description || e.text));
     res.json({ result: out });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

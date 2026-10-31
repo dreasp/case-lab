@@ -1,6 +1,7 @@
 // Small helper for calling the Gemini API with automatic retries.
 
 const usage = require('./usage');
+const { jsonrepair } = require('jsonrepair');
 
 const MODEL = () => process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -34,7 +35,7 @@ async function generateJSON(parts, { temperature = 0.3, images = false } = {}) {
   if (!key) throw new GeminiError('GEMINI_API_KEY is not set on the server.', 'SETUP');
   const base = process.env.GEMINI_BASE || 'https://generativelanguage.googleapis.com';
   const url = `${base}/v1beta/models/${MODEL()}:generateContent`;
-  const generationConfig = { temperature, responseMimeType: 'application/json', maxOutputTokens: 16000 };
+  const generationConfig = { temperature, responseMimeType: 'application/json', maxOutputTokens: 65536 };
   // Flash doesn't need to "think" for this, which saves tokens and avoids empty answers
   if (/flash/i.test(MODEL())) generationConfig.thinkingConfig = { thinkingBudget: 0 };
   // Small previews are enough to judge a shot and use far fewer tokens
@@ -58,7 +59,7 @@ async function generateJSON(parts, { temperature = 0.3, images = false } = {}) {
           throw new GeminiError(`Gemini returned an empty answer (${why}).`, 'BLOCKED');
         }
         await usage.record(MODEL(), data.usageMetadata).catch(() => {});
-        return parseJSON(text);
+        return parseJSON(text, cand && cand.finishReason);
       }
       const errText = await r.text();
       if (r.status === 429 && /per ?day|PerDay|daily/i.test(errText)) {
@@ -74,11 +75,15 @@ async function generateJSON(parts, { temperature = 0.3, images = false } = {}) {
   });
 }
 
-function parseJSON(text) {
-  try { return JSON.parse(text); } catch (e) {}
-  const m = text.match(/[\[{][\s\S]*[\]}]/);
-  if (m) return JSON.parse(m[0]);
-  throw new GeminiError('Could not read Gemini answer as JSON.', 'PARSE');
+// Reads the AI's answer. If it was cut off (very long answers), everything before the cut is kept.
+function parseJSON(text, finishReason) {
+  try { return JSON.parse(text); } catch (e) { /* try harder below */ }
+  const start = text.search(/[\[{]/);
+  const body = start >= 0 ? text.slice(start) : text;
+  try { return JSON.parse(jsonrepair(body)); } catch (e) { /* give up below */ }
+  throw new GeminiError(finishReason === 'MAX_TOKENS'
+    ? 'The AI answer was too long and got cut off. Try again; long files are analyzed in smaller parts.'
+    : 'Could not read the AI answer. Try again.', 'PARSE');
 }
 
 module.exports = { generateJSON };

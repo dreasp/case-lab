@@ -17,7 +17,7 @@ const NATIVE_AUDIO = /\.(mp3|wav|m4a|aac)$/i;
 const AUDIO_DIRECT_MAX = 100 * 1024 * 1024; // bigger recordings are shrunk before uploading
 const SINGLE_PUT_MAX = self.__caselabSinglePutMax || 90 * 1024 * 1024; // files above this go up in parts
 const PART = 50 * 1024 * 1024;
-const WINDOW = 40 * 60; // long videos are analyzed in 40-minute parts
+const WINDOW = 15 * 60; // long videos are analyzed in 15-minute parts (more detail, shorter answers)
 
 let cur = null;            // the open case
 let inited = false;
@@ -28,6 +28,8 @@ const sessionFiles = new Map(); // files added without a folder (only for this s
 const urlCache = new Map();     // storage key -> download link
 const live = new Map();         // file id -> live progress text
 
+// 1:53:14 for long recordings, 4:05 for short ones
+const fmtH = t => { t = Math.max(0, Math.round(t || 0)); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), x = t % 60; return h ? `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}` : `${m}:${String(x).padStart(2, '0')}`; };
 const gb = b => (b / 1024 ** 3).toFixed(b < 1024 ** 3 ? 2 : 1) + ' GB';
 const mb = b => b >= 1024 ** 3 ? gb(b) : Math.max(0.1, b / 1024 ** 2).toFixed(1) + ' MB';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -113,8 +115,10 @@ function renderMeta() {
   const n = t => cur.files.filter(f => f.type === t).length;
   const hours = cur.files.reduce((x, f) => x + (f.duration || 0), 0);
   const done = cur.files.filter(f => f.status === 'done').length;
+  const li = document.querySelector(`#caseList li[data-id="${cur.id}"] span`);
+  if (li) li.textContent = `${cur.files.length} files`;
   $('caseMeta').textContent = `${n('video')} videos · ${n('audio')} audio · ${n('photo')} photos · ${n('document')} documents` +
-    (hours ? ` · ${fmt(hours)} of footage` : '') + ` · ${done} of ${cur.files.length} analyzed`;
+    (hours ? ` · ${fmtH(hours)} of footage` : '') + ` · ${done} of ${cur.files.length} analyzed`;
 }
 
 // ---------- local footage access ----------
@@ -318,7 +322,7 @@ async function renderFiles() {
   $('fileRows').innerHTML = rows.map(f => {
     const th = f.thumbKey && urlCache.get(f.thumbKey);
     const icon = th ? `<img class="ftthumb" src="${esc(th)}" alt="" loading="lazy">` : `<div class="fticon">${f.type}</div>`;
-    const len = f.duration ? fmt(f.duration) + ' · ' : '';
+    const len = f.duration ? fmtH(f.duration) + ' · ' : '';
     const busy = !['new', 'done', 'error'].includes(f.status);
     const lv = live.get(f.id);
     const st = `<div class="st ${f.status === 'done' ? 'done' : f.status === 'error' ? 'error' : busy ? 'busy' : ''}">${esc(STATUS[f.status] || f.status)}${f.status === 'error' && f.error ? ': ' + esc(f.error) : ''}</div>` +
@@ -542,6 +546,9 @@ async function ensureAnalysis(f) {
     f.analysis = mergeParts([r.result]);
   } else {
     await ensureGeminiFile(f);
+    // Parts saved with a different part length (older version) are redone
+    if (f.analysisParts && f.analysisWindow !== WINDOW) f.analysisParts = [];
+    f.analysisWindow = WINDOW;
     const parts = f.analysisParts || [];
     const count = Math.max(1, Math.ceil((f.duration || 1) / WINDOW));
     for (let i = parts.length; i < count; i++) {
@@ -557,6 +564,7 @@ async function ensureAnalysis(f) {
     }
     f.analysis = mergeParts(parts);
     delete f.analysisParts;
+    delete f.analysisWindow;
   }
   await save();
 }
@@ -681,7 +689,7 @@ async function buildMaster() {
 
 const fileById = id => cur.files.find(f => f.id === id);
 const fileLabel = id => { const f = fileById(id); return f ? (f.path || f.name) : id; };
-const ref = (id, t) => `<span class="ref" data-file="${esc(id)}" data-t="${Number(t) || 0}">${esc(fileLabel(id))} ${fmt(t || 0)}</span>`;
+const ref = (id, t) => `<span class="ref" data-file="${esc(id)}" data-t="${Number(t) || 0}">${esc(fileLabel(id))} ${fmtH(t || 0)}</span>`;
 
 function renderResearch() {
   const m = cur && cur.master;
@@ -702,14 +710,14 @@ function downloadDoc() {
   const m = cur.master;
   if (!m) return;
   const txt = s => esc(s || '');
-  const at = (id, t) => `<i>(${txt(fileLabel(id))} at ${fmt(t || 0)})</i>`;
+  const at = (id, t) => `<i>(${txt(fileLabel(id))} at ${fmtH(t || 0)})</i>`;
   const files = cur.files.filter(f => f.analysis).map(f => f.type === 'document' ? `<h3>${txt(f.path || f.name)}</h3>
     <p><b>${txt(f.analysis.doc_type)}</b>${f.analysis.date ? ` · ${txt(f.analysis.date)}` : ''}</p>
     <p>${txt(f.analysis.summary)}</p>
     <ul>${(f.analysis.key_facts || []).map(x => `<li>${txt(x)}</li>`).join('')}</ul>` : `<h3>${txt(f.path || f.name)}</h3>
-    <p><b>${txt(f.analysis.camera)}</b>${f.analysis.clock_start ? ` · starts ${txt(f.analysis.clock_start)}` : ''} · ${fmt(f.duration || 0)}</p>
+    <p><b>${txt(f.analysis.camera)}</b>${f.analysis.clock_start ? ` · starts ${txt(f.analysis.clock_start)}` : ''} · ${fmtH(f.duration || 0)}</p>
     <p>${txt(f.analysis.summary)}</p>
-    <ul>${(f.analysis.moments || []).map(mo => `<li>[${fmt(mo.start)}–${fmt(mo.end)}] <b>${txt(mo.title)}</b>: ${txt(mo.description)}${mo.quote ? ` “${txt(mo.quote)}”` : ''}</li>`).join('')}</ul>`).join('');
+    <ul>${(f.analysis.moments || []).map(mo => `<li>[${fmtH(mo.start)}–${fmtH(mo.end)}] <b>${txt(mo.title)}</b>: ${txt(mo.description)}${mo.quote ? ` “${txt(mo.quote)}”` : ''}</li>`).join('')}</ul>`).join('');
   const html = `<html><head><meta charset="utf-8"><title>${txt(cur.title)}</title>
     <style>body{font-family:Calibri,Arial,sans-serif;font-size:11pt;line-height:1.4}h1{font-size:20pt}h2{font-size:15pt;color:#8b1e1e;margin-top:18pt}h3{font-size:12pt}</style></head><body>
     <h1>${txt(cur.title)}</h1>
@@ -745,7 +753,7 @@ async function openViewer(f, t = 0) {
   vf = f;
   const video = $('fvVideo'), img = $('fvImage');
   $('fvName').textContent = f.path || f.name;
-  $('fvMeta').textContent = [f.type, f.duration && f.type !== 'document' ? fmt(f.duration) : '', f.analysis && f.analysis.clock_start ? 'starts ' + f.analysis.clock_start : '', f.analysis && f.analysis.camera].filter(Boolean).join(' · ');
+  $('fvMeta').textContent = [f.type, f.duration && f.type !== 'document' ? fmtH(f.duration) : '', f.analysis && f.analysis.clock_start ? 'starts ' + f.analysis.clock_start : '', f.analysis && f.analysis.camera].filter(Boolean).join(' · ');
   if (vObjUrl) { URL.revokeObjectURL(vObjUrl); vObjUrl = null; }
   video.classList.toggle('hidden', f.type === 'photo' || f.type === 'document');
   img.classList.toggle('hidden', f.type !== 'photo');
@@ -793,13 +801,13 @@ function renderViewerList() {
   $('fvSpeakers').innerHTML = vTab === 'transcript' ? letters.map(l => `<span class="spk" data-sp="${esc(l)}" title="Click to rename">${esc(names[l] || 'Speaker ' + l)}</span>`).join('') : '';
   let html = '';
   if (vTab === 'transcript') {
-    html = ((f.transcript && f.transcript.utterances) || []).map(u => `<div class="line" data-t="${u.s}"><span class="tm">${fmt(u.s)}</span><span><span class="who">${esc(names[u.sp] || 'Speaker ' + u.sp)}:</span>${esc(u.text)}</span></div>`).join('') ||
+    html = ((f.transcript && f.transcript.utterances) || []).map(u => `<div class="line" data-t="${u.s}"><span class="tm">${fmtH(u.s)}</span><span><span class="who">${esc(names[u.sp] || 'Speaker ' + u.sp)}:</span>${esc(u.text)}</span></div>`).join('') ||
       `<p class="muted">${f.audioKey ? 'No speech found.' : 'No transcript (this file has no usable sound).'}</p>`;
   } else if (vTab === 'moments') {
-    html = ((f.analysis && f.analysis.moments) || []).map(m => `<div class="line" data-t="${m.start}"><span class="tm">${fmt(m.start)}</span><span><span class="imp">${'★'.repeat(Math.max(1, Math.min(5, m.importance || 1)))}</span> <strong>${esc(m.title)}</strong> (${fmt(m.start)}–${fmt(m.end)})<br>${esc(m.description || '')}${m.quote ? `<br><em>“${esc(m.quote)}”</em>` : ''}</span></div>`).join('') +
-      ((f.analysis && f.analysis.sensitive) || []).map(s => `<div class="line" data-t="${s.start}"><span class="tm">${fmt(s.start)}</span><span class="sens">Sensitive: ${esc(s.note || '')}</span></div>`).join('');
+    html = ((f.analysis && f.analysis.moments) || []).map(m => `<div class="line" data-t="${m.start}"><span class="tm">${fmtH(m.start)}</span><span><span class="imp">${'★'.repeat(Math.max(1, Math.min(5, m.importance || 1)))}</span> <strong>${esc(m.title)}</strong> (${fmtH(m.start)}–${fmtH(m.end)})<br>${esc(m.description || '')}${m.quote ? `<br><em>“${esc(m.quote)}”</em>` : ''}</span></div>`).join('') +
+      ((f.analysis && f.analysis.sensitive) || []).map(s => `<div class="line" data-t="${s.start}"><span class="tm">${fmtH(s.start)}</span><span class="sens">Sensitive: ${esc(s.note || '')}</span></div>`).join('');
   } else {
-    html = ((f.analysis && f.analysis.events) || []).map(e => `<div class="line" data-t="${e.t}"><span class="tm">${fmt(e.t)}</span><span>${esc(e.what)}</span></div>`).join('');
+    html = ((f.analysis && f.analysis.events) || []).map(e => `<div class="line" data-t="${e.t}"><span class="tm">${fmtH(e.t)}</span><span>${esc(e.what)}</span></div>`).join('');
   }
   $('fvList').innerHTML = html || '<p class="muted">Nothing yet.</p>';
 }
