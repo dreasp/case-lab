@@ -27,7 +27,7 @@
       <div class="brand">CASE<span>LAB</span></div>
       <nav class="modes">
         <button class="mode active" data-mode="broll">B-roll builder</button>
-        <button class="mode" data-mode="footage">Footage analysis <em>soon</em></button>
+        <button class="mode" data-mode="footage">Footage analysis</button>
       </nav>
       <button id="aiUsage" class="usage-chip" type="button" title="Estimated AI cost this month"></button>
       <span id="syncState" class="sync"></span>
@@ -176,10 +176,102 @@
     </main>
 
     <main id="mode-footage" class="layout hidden">
+      <aside class="sidebar">
+        <button id="newCase" class="btn primary block">+ New case</button>
+        <h4>Cases</h4>
+        <ul id="caseList" class="project-list"></ul>
+        <div id="storageBox" class="storage hidden">
+          <h4>Cloud storage</h4>
+          <div class="storage-bar"><div id="storageFill"></div></div>
+          <span id="storageText" class="muted small-text"></span>
+        </div>
+      </aside>
+
       <section class="work">
-        <div class="panel">
-          <h2>Footage analysis</h2>
-          <p class="muted">Coming next: upload police footage and photos, get a speaker-labeled transcript, the best moments in story order, a rough cut and your narration script.</p>
+        <!-- New case -->
+        <div id="newCasePanel" class="panel hidden">
+          <h2>New case</h2>
+          <p class="muted">Your footage stays on your computer. Small analysis copies (about 100 MB per hour of video) go to the cloud so the AI can watch and listen. Transcripts and research are saved to the cloud.</p>
+          <label class="field">Case title
+            <input id="caseTitleInput" placeholder="e.g. Ernesto Miranda: Phoenix 1963">
+          </label>
+          <label class="field">Case context
+            <textarea id="caseContextInput" rows="7" placeholder="Names and roles exactly as they should be spelled, plus anything you already know. For example:&#10;Ernesto Miranda: suspect&#10;Carroll Cooley, Wilfred Young: Phoenix PD detectives&#10;The victim is an 18-year-old woman (do not name her)&#10;Incident: March 3, 1963, Phoenix, Arizona"></textarea>
+          </label>
+          <button id="caseCreate" class="btn primary">Create case</button>
+        </div>
+
+        <!-- Case -->
+        <div id="casePanel" class="hidden">
+          <div class="project-head">
+            <div>
+              <div class="title-row">
+                <h2 id="caseTitle" title="Double-click to rename"></h2>
+                <form id="caseTitleEdit" class="title-edit hidden">
+                  <input id="caseTitleEditInput" maxlength="150" aria-label="Case title">
+                  <button class="btn small primary" type="submit">Save</button>
+                  <button id="caseTitleCancel" class="btn small ghost" type="button">Cancel</button>
+                </form>
+                <button id="caseRename" class="btn ghost small" type="button">Rename</button>
+              </div>
+              <p id="caseMeta" class="muted"></p>
+            </div>
+            <div class="head-actions">
+              <button id="caseFreeSpace" class="btn ghost small" type="button" title="Delete the analysis copies from the cloud; transcripts and research stay">Free cloud space</button>
+              <button id="caseDelete" class="btn ghost small" type="button">Delete case</button>
+            </div>
+          </div>
+
+          <div class="tabs" id="caseTabs">
+            <button class="tab active" data-tab="files" type="button">Files</button>
+            <button class="tab" data-tab="research" type="button">Research</button>
+            <button class="tab" data-tab="context" type="button">Case context</button>
+          </div>
+
+          <!-- Files -->
+          <div id="ctab-files">
+            <div id="accessBar" class="banner-inline hidden">
+              <span id="accessText"></span>
+              <button id="accessBtn" class="btn small primary" type="button">Allow access</button>
+            </div>
+            <div class="case-actions">
+              <button id="pickFolder" class="btn" type="button">Choose case folder</button>
+              <label class="btn ghost">Add files
+                <input id="addFiles" type="file" multiple accept="video/*,audio/*,image/*,.mov,.mp4,.m4v,.mp3,.wav,.m4a,.jpg,.jpeg,.png,.webp" hidden>
+              </label>
+              <span id="folderName" class="muted small-text"></span>
+              <div class="grow"></div>
+              <button id="analyzeAll" class="btn primary" type="button">Analyze all</button>
+            </div>
+            <div id="caseProgress" class="progress hidden">
+              <div class="progress-bar"><div id="caseProgressFill"></div></div>
+              <span id="caseProgressText"></span>
+              <button id="caseCancel" class="btn ghost small" type="button">Stop</button>
+            </div>
+            <div id="dropZone" class="drop-hint">Drop videos, audio recordings and photos here</div>
+            <table class="files">
+              <thead><tr><th></th><th>File</th><th>Type</th><th>Length / size</th><th>Status</th><th></th></tr></thead>
+              <tbody id="fileRows"></tbody>
+            </table>
+          </div>
+
+          <!-- Research -->
+          <div id="ctab-research" class="hidden">
+            <div class="case-actions">
+              <button id="buildMaster" class="btn primary" type="button">Build case research</button>
+              <button id="downloadDoc" class="btn ghost" type="button">Download as Word</button>
+              <span class="muted small-text">Combines every analyzed file into one chronological case document.</span>
+            </div>
+            <div id="researchBody" class="research"></div>
+          </div>
+
+          <!-- Context -->
+          <div id="ctab-context" class="hidden">
+            <p class="muted">The AI uses this to recognize people and spell names correctly, in transcripts too. Changes apply to files analyzed afterwards.</p>
+            <textarea id="caseContext" rows="14"></textarea>
+            <button id="saveContext" class="btn primary" type="button">Save context</button>
+            <span id="contextSaved" class="muted small-text"></span>
+          </div>
         </div>
       </section>
     </main>
@@ -204,6 +296,34 @@
     </form>
     <p id="swapStatus" class="status"></p>
     <div id="swapGrid" class="grid"></div>
+  </dialog>
+
+  <!-- Footage file viewer -->
+  <dialog id="fileDialog" class="swap viewer-dialog">
+    <div class="swap-head">
+      <div>
+        <div id="fvMeta" class="mono muted"></div>
+        <h3 id="fvName"></h3>
+      </div>
+      <button id="fvClose" class="btn ghost small" type="button">Close</button>
+    </div>
+    <div class="fv-body">
+      <div class="fv-left">
+        <video id="fvVideo" controls playsinline></video>
+        <img id="fvImage" alt="" class="hidden">
+        <p id="fvSource" class="muted small-text"></p>
+        <div id="fvSummary" class="fv-summary"></div>
+      </div>
+      <div class="fv-right">
+        <div class="tabs" id="fvTabs">
+          <button class="tab active" data-tab="transcript" type="button">Transcript</button>
+          <button class="tab" data-tab="moments" type="button">Key moments</button>
+          <button class="tab" data-tab="events" type="button">Everything that happens</button>
+        </div>
+        <div id="fvSpeakers" class="fv-speakers"></div>
+        <div id="fvList" class="fv-list"></div>
+      </div>
+    </div>
   </dialog>
 
   <!-- Shot editor -->

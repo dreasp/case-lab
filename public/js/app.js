@@ -60,20 +60,24 @@ async function start() {
   // Copy anything saved only in this browser up to the cloud
   syncAll().then(refreshProjects).catch(() => {});
   refreshUsage();
-  const list = await store.listProjects();
+  try { if (localStorage.getItem('caselab-mode') === 'footage') showMode('footage'); } catch (e) { /* ignore */ }
+  const list = (await store.listProjects()).filter(p => p.kind !== 'case');
   if (list.length) await openProject(list[0].id); else showImport();
 }
 
 // ---------- modes ----------
-document.querySelectorAll('.mode').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('.mode').forEach(x => x.classList.toggle('active', x === b));
-  $('mode-broll').classList.toggle('hidden', b.dataset.mode !== 'broll');
-  $('mode-footage').classList.toggle('hidden', b.dataset.mode !== 'footage');
-}));
+function showMode(mode) {
+  document.querySelectorAll('.mode').forEach(x => x.classList.toggle('active', x.dataset.mode === mode));
+  $('mode-broll').classList.toggle('hidden', mode !== 'broll');
+  $('mode-footage').classList.toggle('hidden', mode !== 'footage');
+  try { localStorage.setItem('caselab-mode', mode); } catch (e) { /* not important */ }
+  if (mode === 'footage') { renderer.stop(); import('./footage.js').then(m => m.openFootage()).catch(e => console.error(e)); }
+}
+document.querySelectorAll('.mode').forEach(b => b.addEventListener('click', () => showMode(b.dataset.mode)));
 
 // ---------- project list ----------
 async function refreshProjects() {
-  const list = await store.listProjects();
+  const list = (await store.listProjects()).filter(p => p.kind !== 'case');
   $('projectList').innerHTML = list.map(p => `
     <li class="${project && p.id === project.id ? 'active' : ''}" data-id="${p.id}">
       <strong>${esc(p.title)}</strong>
@@ -195,7 +199,7 @@ $('deleteProject').addEventListener('click', async () => {
   await store.deleteProject(project.id);
   project = null;
   await refreshProjects();
-  const list = await store.listProjects();
+  const list = (await store.listProjects()).filter(p => p.kind !== 'case');
   if (list.length) openProject(list[0].id); else showImport();
 });
 
@@ -1227,3 +1231,5 @@ $('capCreate').addEventListener('click', async () => {
     $('capCreate').disabled = false;
   }
 });
+
+export { api, refreshUsage, fmt, esc };

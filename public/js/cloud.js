@@ -98,7 +98,7 @@ export const cloudStore = {
 
   async listProjects() {
     const local = await store.listProjects();
-    const map = new Map(local.map(p => [p.id, { id: p.id, title: p.title, updated: p.updated, duration: p.duration, shotCount: p.shots.length }]));
+    const map = new Map(local.map(p => [p.id, { id: p.id, kind: p.kind || 'broll', title: p.title, updated: p.updated, duration: p.duration, shotCount: (p.shots || []).length, fileCount: (p.files || []).length }]));
     if ((await cloudStatus()).projects) {
       try {
         const { projects, deleted = [] } = await call('cloud/projects');
@@ -106,7 +106,7 @@ export const cloudStore = {
         for (const id of deleted) if (map.has(id)) { map.delete(id); await store.deleteProject(id); }
         for (const c of projects) {
           const l = map.get(c.id);
-          if (!l || (c.updated || 0) > (l.updated || 0)) map.set(c.id, { id: c.id, title: c.title, updated: c.updated, duration: c.duration, shotCount: c.shots });
+          if (!l || (c.updated || 0) > (l.updated || 0)) map.set(c.id, { id: c.id, kind: c.kind || 'broll', title: c.title, updated: c.updated, duration: c.duration, shotCount: c.shots, fileCount: c.files || 0 });
         }
       } catch (e) { lastError = e.message; emit(); }
     }

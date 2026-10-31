@@ -3,7 +3,7 @@
 One app for two jobs:
 
 1. **B-roll builder** (live): upload your ElevenLabs narration (AAF) and the Word script. The app splits it into sentences, asks Gemini for literal, non-violent search terms, searches Pixabay and Wikimedia Commons, lets Gemini look at the thumbnails and pick the best match, then exports a finished 1080p video in your browser.
-2. **Footage analysis** (next): police footage and photos in, speaker-labeled transcript, best moments, rough cut and narration script out.
+2. **Footage analysis**: point it at a case folder on your computer (videos, audio recordings, photos). It makes small analysis copies (1 frame per second + the original sound), gets a speaker-labeled transcript from AssemblyAI, has Gemini watch every video, describes the photos, and builds one chronological case research document. Originals never leave your computer. Next: story builder and final video.
 
 ## How it runs
 
@@ -46,6 +46,7 @@ Then open http://localhost:3000. Put the settings in a `.env` file (see `.env.ex
 - `api/cloud.js`: cloud saving (Neon + R2)
 - `api/captions.js`: AssemblyAI word timing for captions
 - `api/usage.js`: monthly AI cost estimate
+- `api/footage.js`: footage analysis (transcripts, video analysis, photos, case research)
 - `public/js/importer.js`: reads AAF, audio and Word script, builds timings
 - `public/js/renderer.js`: preview and export
 - `public/js/app.js`: the screens
@@ -54,3 +55,5 @@ Then open http://localhost:3000. Put the settings in a `.env` file (see `.env.ex
 - `public/js/captions.js`: matches script to word timing, builds caption lines and .srt
 - `public/js/draw.js`: drawing shared by preview, editor and export
 - `public/js/export-worker.js`: full-quality background export
+- `public/js/footage.js`: the Footage analysis screens
+- `public/js/proxy-worker.js`: makes the small analysis copies of videos in the background
