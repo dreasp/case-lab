@@ -1,4 +1,4 @@
-// Keeps a running estimate of what the AI (Gemini) has cost this month.
+// Keeps a running estimate of what the AI (Gemini, AssemblyAI) has cost this month.
 // It's an estimate from Google's published prices; the exact bill is in AI Studio > Spend.
 
 const express = require('express');
@@ -38,6 +38,22 @@ async function db() {
   }
   await ready;
   return pool;
+}
+
+// Adds a cost that isn't measured in Gemini tokens (for example AssemblyAI transcription)
+async function addCost(usd) {
+  const m = month();
+  try {
+    const pool = await db();
+    if (pool) {
+      await pool.query(`INSERT INTO ai_usage (month, requests, cost) VALUES ($1, 1, $2)
+        ON CONFLICT (month) DO UPDATE SET requests = ai_usage.requests + 1, cost = ai_usage.cost + $2`, [m, usd]);
+      return;
+    }
+  } catch (e) { console.warn('Could not save AI usage:', e.message); }
+  const cur = memory.get(m) || { requests: 0, input_tokens: 0, output_tokens: 0, cost: 0 };
+  cur.requests++; cur.cost += usd;
+  memory.set(m, cur);
 }
 
 // Called after every successful Gemini answer
@@ -82,4 +98,4 @@ router.get('/usage', async (req, res) => {
   });
 });
 
-module.exports = { router, record, setDb };
+module.exports = { router, record, addCost, setDb };

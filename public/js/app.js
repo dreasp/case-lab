@@ -1,4 +1,6 @@
 import { cloudStore as store, syncAll, onSync } from './cloud.js';
+import { store as localStore } from './store.js';
+import { alignWords, buildCues, setCueText, setCueTime, cueText, toSRT, retimeShots, PRESETS, DEFAULT_STYLE } from './captions.js';
 import { readAAF, readAudio, readScript, buildTimeline, wordCountCheck } from './importer.js';
 import { Renderer, drawMedia, mediaLayout, frameFor, SIZES, loadVideo, loadImage } from './renderer.js';
 
@@ -168,6 +170,7 @@ async function openProject(id) {
   $('projectPanel').classList.remove('hidden');
   renderHeader();
   renderShots();
+  renderCaptions();
   refreshProjects();
   clearCanvas();
   if (project.shots.some(s => s.choice)) renderer.showFrame(0).catch(() => {});
@@ -268,8 +271,14 @@ function selectShot(i) {
 // ---------- player ----------
 const renderer = new Renderer($('canvas'), {
   mediaUrl: shot => mediaSources(shot.choice),
+  getCaptions: () => {
+    const c = project && project.captions;
+    if (!c || !c.show) return null;
+    return { cues: c.cues[aspectOf()], style: c.style[aspectOf()] };
+  },
   onTime: (t, i) => {
     $('timeLabel').textContent = `${fmt(t)} / ${fmt(project ? project.duration : 0)}`;
+    markActiveCue(t);
     if (i !== selectedShot && renderer.running) {
       selectShot(i);
       const li = document.querySelector(`#shotList li[data-i="${i}"]`);
@@ -303,6 +312,7 @@ document.querySelectorAll('#formatSeg button').forEach(b => b.addEventListener('
   await save();
   applyAspect();
   renderHeader();
+  renderCaptions();
   await renderShots();
   renderer.showFrame(project.shots[selectedShot]?.start + 0.01 || 0).catch(() => {});
 }));
@@ -709,7 +719,8 @@ $('exportBtn').addEventListener('click', async () => {
         else if (data.type === 'error') reject(new Error(data.message));
       };
       exportWorker.onerror = e => reject(new Error(e.message || 'Export stopped unexpectedly'));
-      const job = { aspect, duration: project.duration, shots, audio, fileHandle, bitrate: BITRATE[aspect] };
+      const cap = project.captions && project.captions.show ? { cues: project.captions.cues[aspect], style: project.captions.style[aspect] } : null;
+      const job = { aspect, duration: project.duration, shots, audio, fileHandle, bitrate: BITRATE[aspect], captions: cap };
       exportWorker.postMessage({ type: 'start', job }, [audio.buffer]);
     });
     progress(false);
@@ -1024,4 +1035,195 @@ $('aiUsage').addEventListener('click', () => {
     `Only "Find footage" uses the AI. Searching, previewing and exporting are free.\n` +
     `This is an estimate from Google's published prices. Your exact bill is in Google AI Studio > Spend.` +
     (usageInfo.saved ? '' : '\n\n(Not saved permanently: the count restarts when the server restarts.)'));
+});
+
+// ---------- tabs ----------
+document.querySelectorAll('#workTabs .tab').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#workTabs .tab').forEach(x => x.classList.toggle('active', x === b));
+  $('tab-shots').classList.toggle('hidden', b.dataset.tab !== 'shots');
+  $('tab-captions').classList.toggle('hidden', b.dataset.tab !== 'captions');
+}));
+
+// ---------- captions ----------
+const capCues = () => project.captions.cues[aspectOf()];
+const capStyle = () => project.captions.style[aspectOf()];
+let capSaveTimer = null;
+function capChanged(redraw = true) {
+  clearTimeout(capSaveTimer);
+  capSaveTimer = setTimeout(() => save(), 600);
+  if (redraw && !renderer.running) renderer.refreshCaptions();
+}
+
+function renderCaptions() {
+  if (!project) return;
+  const c = project.captions;
+  $('capEmpty').classList.toggle('hidden', !!c);
+  $('capReady').classList.toggle('hidden', !c);
+  if (!c) return;
+  $('capShow').checked = !!c.show;
+  $('capAspect').textContent = aspectOf() === '9:16' ? '9:16 Short' : '16:9';
+  const st = capStyle();
+  document.querySelectorAll('#capPreset button').forEach(b => b.classList.toggle('active', b.dataset.preset === st.preset));
+  $('capSize').value = st.size;
+  $('capY').value = st.y;
+  $('capBox').checked = !!st.box;
+  $('capCaps').checked = !!st.caps;
+  $('capHighlight').value = st.highlight || '#ffd400';
+  $('capHighlightWrap').classList.toggle('hidden', st.preset !== 'bold');
+  renderCueList();
+}
+
+function renderCueList() {
+  const cues = capCues();
+  $('capList').innerHTML = cues.map((q, i) => `
+    <li class="cap" data-i="${i}">
+      <input class="t" data-f="s" value="${q.s.toFixed(1)}" inputmode="decimal" title="Start (seconds)">
+      <input class="t" data-f="e" value="${q.e.toFixed(1)}" inputmode="decimal" title="End (seconds)">
+      <input class="txt" data-f="text" value="${esc(cueText(q))}">
+      <button class="x" data-f="del" type="button" title="Delete this line">✕</button>
+    </li>`).join('');
+  lastActiveCue = -1;
+}
+
+let lastActiveCue = -1;
+function markActiveCue(t) {
+  if (!project || !project.captions || $('tab-captions').classList.contains('hidden')) return;
+  const cues = capCues();
+  const i = cues.findIndex(q => t >= q.s && t < q.e);
+  if (i === lastActiveCue) return;
+  lastActiveCue = i;
+  document.querySelectorAll('#capList .cap').forEach(li => li.classList.toggle('active', +li.dataset.i === i));
+  const li = document.querySelector(`#capList .cap[data-i="${i}"]`);
+  if (li && renderer.running) li.scrollIntoView({ block: 'nearest' });
+}
+
+$('capList').addEventListener('click', e => {
+  const li = e.target.closest('.cap');
+  if (!li) return;
+  const i = +li.dataset.i;
+  const cues = capCues();
+  if (e.target.dataset.f === 'del') {
+    cues.splice(i, 1);
+    capChanged();
+    renderCueList();
+    return;
+  }
+  if (!renderer.running) renderer.showFrame(cues[i].s + 0.05).catch(() => {});
+  document.querySelectorAll('#capList .cap').forEach(x => x.classList.toggle('active', x === li));
+});
+
+$('capList').addEventListener('change', e => {
+  const li = e.target.closest('.cap');
+  if (!li) return;
+  const q = capCues()[+li.dataset.i];
+  const f = e.target.dataset.f;
+  if (f === 'text') {
+    if (!e.target.value.trim()) { e.target.value = cueText(q); return; }
+    setCueText(q, e.target.value);
+  } else if (f === 's' || f === 'e') {
+    const v = parseFloat(String(e.target.value).replace(',', '.'));
+    if (!isFinite(v) || v < 0) { e.target.value = q[f].toFixed(1); return; }
+    setCueTime(q, f === 's' ? v : q.s, f === 'e' ? v : q.e);
+    capCues().sort((a, b) => a.s - b.s);
+    renderCueList();
+  }
+  capChanged(false);
+  if (!renderer.running) renderer.showFrame(q.s + 0.05).catch(() => {});
+});
+
+$('capShow').addEventListener('change', () => { project.captions.show = $('capShow').checked; capChanged(); if (!renderer.running) renderer.showFrame(renderer.lastFrameTime || 0).catch(() => {}); });
+$('capSize').addEventListener('input', () => { capStyle().size = +$('capSize').value; capChanged(); });
+$('capY').addEventListener('input', () => { capStyle().y = +$('capY').value; capChanged(); });
+$('capBox').addEventListener('change', () => { capStyle().box = $('capBox').checked; capChanged(); });
+$('capCaps').addEventListener('change', () => { capStyle().caps = $('capCaps').checked; capChanged(); });
+$('capHighlight').addEventListener('input', () => { capStyle().highlight = $('capHighlight').value; capChanged(); });
+
+document.querySelectorAll('#capPreset button').forEach(b => b.addEventListener('click', () => {
+  const st = capStyle();
+  if (b.dataset.preset === st.preset) return;
+  if (capCues().some(q => q.edited) && !confirm('Switching style rebuilds the caption lines for this format, so your edits to the lines will be replaced. Continue?')) return;
+  project.captions.style[aspectOf()] = { ...PRESETS[b.dataset.preset] };
+  project.captions.cues[aspectOf()] = buildCues(project.captions.words, b.dataset.preset);
+  capChanged();
+  renderCaptions();
+}));
+
+$('capRebuild').addEventListener('click', () => {
+  if (!confirm('Rebuild the caption lines for this format from the word timings? Your edits to the lines will be replaced (style settings stay).')) return;
+  project.captions.cues[aspectOf()] = buildCues(project.captions.words, capStyle().preset);
+  capChanged();
+  renderCueList();
+});
+
+$('capSrt').addEventListener('click', () => {
+  const blob = new Blob([toSRT(capCues())], { type: 'application/x-subrip' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = exportName().replace(/\.mp4$/, '.srt');
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+});
+
+$('capRetime').addEventListener('click', async () => {
+  if (!confirm('Move every B-roll cut to the exact moment its sentence starts being spoken?\n\nAll your footage choices, start points and framing stay the same; only the cut times shift slightly.')) return;
+  renderer.stop();
+  const moved = retimeShots(project);
+  await save();
+  renderer.setProject(project.shots, audioBlob);
+  await renderShots();
+  renderer.showFrame(0).catch(() => {});
+  alert(moved ? `Done: ${moved} sentence cuts were moved to match your voice exactly.` : 'Everything already lined up, nothing needed to move.');
+});
+
+$('capCreate').addEventListener('click', async () => {
+  if (!project || busy) return;
+  const status = $('capStatus');
+  $('capCreate').disabled = true;
+  try {
+    const ready = await api('captions/ready');
+    if (!ready.ready) throw new Error('AssemblyAI is not connected yet: add ASSEMBLYAI_API_KEY in Render > Environment.');
+    const key = project.id + ':audio';
+    let id = null;
+    // If the narration is already in cloud storage, AssemblyAI fetches it from there
+    if (await localStore.getFile(key + '#cloud')) {
+      try { id = (await api('captions/start', { key })).id; } catch (e) { id = null; }
+    }
+    if (!id) {
+      status.textContent = 'Sending the narration to AssemblyAI…';
+      const r = await fetch('/api/captions/upload', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: audioBlob, credentials: 'same-origin' });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'Upload failed');
+      id = data.id;
+    }
+    const t0 = Date.now();
+    let res;
+    for (;;) {
+      status.textContent = `AssemblyAI is listening to the narration… (${Math.round((Date.now() - t0) / 1000)}s, usually under a minute)`;
+      await new Promise(r => setTimeout(r, 3000));
+      res = await api('captions/status/' + id);
+      if (res.status === 'completed') break;
+      if (res.status === 'error') throw new Error(res.error);
+      if (Date.now() - t0 > 20 * 60 * 1000) throw new Error('Transcription is taking too long. Try again later.');
+    }
+    status.textContent = 'Matching the timing to your script…';
+    const words = alignWords(project.paragraphs, res.words);
+    project.captions = {
+      transcriptId: id,
+      words,
+      cues: { '16:9': buildCues(words, DEFAULT_STYLE['16:9'].preset), '9:16': buildCues(words, DEFAULT_STYLE['9:16'].preset) },
+      style: { '16:9': { ...DEFAULT_STYLE['16:9'] }, '9:16': { ...DEFAULT_STYLE['9:16'] } },
+      show: true,
+    };
+    await save();
+    status.textContent = '';
+    renderCaptions();
+    renderer.showFrame(renderer.lastFrameTime || 0).catch(() => {});
+    refreshUsage();
+  } catch (e) {
+    status.textContent = 'Problem: ' + e.message;
+  } finally {
+    $('capCreate').disabled = false;
+  }
 });

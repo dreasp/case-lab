@@ -117,6 +117,11 @@
             </div>
           </div>
 
+          <div class="tabs" id="workTabs">
+            <button class="tab active" data-tab="shots" type="button">Shots</button>
+            <button class="tab" data-tab="captions" type="button">Captions</button>
+          </div>
+          <div id="tab-shots">
           <div class="shots-head">
             <h3>Shots</h3>
             <div class="legend">
@@ -128,6 +133,44 @@
             <button id="creditsBtn" class="btn ghost small">Copy credits</button>
           </div>
           <ol id="shotList" class="shot-list"></ol>
+          </div>
+
+          <!-- Captions -->
+          <div id="tab-captions" class="hidden">
+            <div id="capEmpty" class="panel cap-empty">
+              <h3>Captions</h3>
+              <p class="muted">The app sends your narration to AssemblyAI to find exactly when each word is spoken (about 3 cents for an 8-minute video). The words on screen come from your script, so names are always spelled your way.</p>
+              <button id="capCreate" class="btn primary" type="button">Create captions</button>
+              <p id="capStatus" class="status"></p>
+            </div>
+
+            <div id="capReady" class="hidden">
+              <div class="cap-bar">
+                <label class="switch"><input type="checkbox" id="capShow"> <span>Show captions (preview and export)</span></label>
+                <div class="grow"></div>
+                <button id="capSrt" class="btn small" type="button">Download .srt for YouTube</button>
+                <button id="capRetime" class="btn small ghost" type="button" title="Move each B-roll cut to the exact moment its sentence starts">Line up shot cuts with the words</button>
+                <button id="capRebuild" class="btn small ghost" type="button">Rebuild lines</button>
+              </div>
+
+              <div class="cap-style">
+                <div class="cap-field">
+                  <span>Style for <strong id="capAspect">16:9</strong></span>
+                  <div id="capPreset" class="seg">
+                    <button data-preset="classic" type="button">Classic subtitles</button>
+                    <button data-preset="bold" type="button">Big bold words</button>
+                  </div>
+                </div>
+                <label class="cap-field">Size <input id="capSize" type="range" min="0.6" max="1.6" step="0.05"></label>
+                <label class="cap-field">Position <input id="capY" type="range" min="0.1" max="0.94" step="0.01"></label>
+                <label class="cap-check"><input id="capBox" type="checkbox"> Dark box behind text</label>
+                <label class="cap-check"><input id="capCaps" type="checkbox"> ALL CAPS</label>
+                <label class="cap-check" id="capHighlightWrap">Highlight spoken word <input id="capHighlight" type="color"></label>
+              </div>
+              <p class="muted small-text">Click a line to see it on the video. Edit the text or the times (in seconds); changes show right away. Lines are separate for 16:9 and 9:16.</p>
+              <ol id="capList" class="cap-list"></ol>
+            </div>
+          </div>
         </div>
       </section>
     </main>

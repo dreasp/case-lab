@@ -152,4 +152,4 @@ router.get('/cloud/check', async (req, res) => {
   res.json(out);
 });
 
-module.exports = { router, db };
+module.exports = { router, db, signedUrl, filesReady: () => !!r2(), KEY_RE };

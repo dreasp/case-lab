@@ -62,9 +62,14 @@ const waitFor = (el, evt, ms) => new Promise(res => {
 });
 
 export class Renderer {
-  constructor(canvas, { mediaUrl, onTime, onState }) {
-    this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
+  constructor(canvas, { mediaUrl, onTime, onState, getCaptions }) {
+    this.getCaptions = getCaptions || (() => null); // () => { cues, style } or null
+    // Footage is drawn on a hidden layer; the visible canvas = footage layer + captions on top
+    this.out = canvas;
+    this.outCtx = canvas.getContext('2d');
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = canvas.width; this.canvas.height = canvas.height;
+    this.ctx = this.canvas.getContext('2d');
     this.mediaUrl = mediaUrl;          // async (shot) => list of { url, delay } to try, or null
     this.onTime = onTime || (() => {});
     this.onState = onState || (() => {});
@@ -77,6 +82,7 @@ export class Renderer {
     this.aspect = SIZES[aspect] ? aspect : '16:9';
     const [w, h] = SIZES[this.aspect];
     this.canvas.width = w; this.canvas.height = h;
+    this.out.width = w; this.out.height = h;
   }
 
   setProject(shots, audioBlob) {
@@ -209,7 +215,7 @@ export class Renderer {
       const dest = this.actx.createMediaStreamDestination();
       src.connect(dest);
       const stream = new MediaStream([
-        ...this.canvas.captureStream(30).getVideoTracks(),
+        ...this.out.captureStream(30).getVideoTracks(),
         ...dest.stream.getAudioTracks(),
       ]);
       mime = pickMime();
@@ -292,6 +298,8 @@ export class Renderer {
       // If a clip failed to load, the previous picture simply stays on screen
       if (alpha >= 1 && it.status === 'ready') { this.ctx.fillStyle = '#000'; this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height); }
       this.drawShot(i, t, alpha);
+      this.drawCaptions(t);
+      this.lastFrameTime = t;
       this.onTime(t, i);
       if (onProgress) onProgress(t / end);
       requestAnimationFrame(tick);
@@ -338,8 +346,20 @@ export class Renderer {
     this.ctx.fillStyle = '#000';
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     this.drawShot(i, t, 1);
+    this.drawCaptions(t);
+    this.lastFrameTime = t;
     this.onTime(t, i);
   }
+
+  // Copy the footage layer to the screen and add captions on top
+  drawCaptions(t) {
+    this.outCtx.drawImage(this.canvas, 0, 0);
+    const c = this.getCaptions();
+    if (c && c.cues) window.CaseDraw.drawCaptions(this.outCtx, this.out.width, this.out.height, c.cues, t, c.style);
+  }
+
+  // Redraw captions over the last frame (used while adjusting caption style)
+  refreshCaptions() { this.drawCaptions(this.lastFrameTime || 0); }
 }
 
 export function pickMime() {

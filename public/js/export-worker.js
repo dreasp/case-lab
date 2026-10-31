@@ -268,8 +268,11 @@ async function run(job) {
   });
   encoder.configure(v.cfg);
 
+  // Footage is drawn on `canvas`; the encoded picture is `out` = footage + captions on top
   const canvas = new OffscreenCanvas(W, H);
   const ctx = canvas.getContext('2d', { alpha: false });
+  const out = job.captions ? new OffscreenCanvas(W, H) : canvas;
+  const octx = job.captions ? out.getContext('2d', { alpha: false }) : ctx;
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
 
@@ -329,7 +332,13 @@ async function run(job) {
       ctx.globalAlpha = 1;
     } // a clip that failed to load keeps the previous picture on screen
 
-    const frame = new VideoFrame(canvas, { timestamp: Math.round(k * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
+    // Captions go on top of everything (only when switched on for this export)
+    if (job.captions) {
+      octx.drawImage(canvas, 0, 0);
+      CaseDraw.drawCaptions(octx, W, H, job.captions.cues, t, job.captions.style);
+    }
+
+    const frame = new VideoFrame(out, { timestamp: Math.round(k * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
     encoder.encode(frame, { keyFrame: k % (FPS * 2) === 0 });
     frame.close();
     while (encoder.encodeQueueSize > 6) await sleep(2);

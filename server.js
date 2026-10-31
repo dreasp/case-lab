@@ -19,6 +19,7 @@ const auth = require('./api/auth');
 const broll = require('./api/broll');
 const cloud = require('./api/cloud');
 const usage = require('./api/usage');
+const captions = require('./api/captions');
 usage.setDb(cloud.db);
 
 const app = express();
@@ -39,6 +40,7 @@ app.use('/api', auth.router);
 app.use('/api', auth.requireLogin, broll.router);
 app.use('/api', auth.requireLogin, cloud.router);
 app.use('/api', auth.requireLogin, usage.router);
+app.use('/api', auth.requireLogin, captions.router);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.json({ ok: true }));
