@@ -532,6 +532,28 @@ function mergeParts(parts) {
   return out;
 }
 
+// One stretch of a video. If the AI's answer can't be read, the stretch is tried again in two
+// halves; a short stretch that still fails is skipped with a note, so the rest of the file finishes.
+const UNREADABLE = /read the AI answer|cut off|empty answer/i;
+async function watchPart(f, utterances, from, to) {
+  try {
+    const r = await api('case/analyze-video', {
+      uri: f.gfile.uri, mime: f.gfile.mime, fileName: f.name, duration: f.duration, title: cur.title,
+      context: cur.context, utterances, from, to,
+    });
+    return r.result;
+  } catch (e) {
+    if (stopFlag || !UNREADABLE.test(e.message)) throw e;
+    if (to - from > 4 * 60) {
+      const mid = Math.round((from + to) / 2);
+      const a = await watchPart(f, utterances, from, mid);
+      const b = await watchPart(f, utterances, mid, to);
+      return mergeParts([a, b]);
+    }
+    return { uncertain: [`The AI could not read the part from ${fmtH(from)} to ${fmtH(to)}. Watch it yourself; its transcript is still in the Transcript tab.`] };
+  }
+}
+
 async function ensureAnalysis(f) {
   if (f.analysis) return;
   const utterances = (f.transcript && f.transcript.utterances) || [];
@@ -554,11 +576,7 @@ async function ensureAnalysis(f) {
     for (let i = parts.length; i < count; i++) {
       if (stopFlag) throw new Error('Stopped');
       setStatus(f, 'watching', i / count);
-      const r = await api('case/analyze-video', {
-        uri: f.gfile.uri, mime: f.gfile.mime, fileName: f.name, duration: f.duration, title: cur.title,
-        context: cur.context, utterances, from: i * WINDOW, to: Math.min(f.duration, (i + 1) * WINDOW),
-      });
-      parts.push(r.result);
+      parts.push(await watchPart(f, utterances, i * WINDOW, Math.min(f.duration, (i + 1) * WINDOW)));
       f.analysisParts = parts;
       await save();
     }

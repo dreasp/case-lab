@@ -44,6 +44,7 @@ async function generateJSON(parts, { temperature = 0.3, images = false } = {}) {
 
   return queued(async () => {
     const waits = [15000, 30000, 60000];
+    let parseRetried = false;
     for (let attempt = 0; ; attempt++) {
       const r = await fetch(url, {
         method: 'POST',
@@ -59,7 +60,18 @@ async function generateJSON(parts, { temperature = 0.3, images = false } = {}) {
           throw new GeminiError(`Gemini returned an empty answer (${why}).`, 'BLOCKED');
         }
         await usage.record(MODEL(), data.usageMetadata).catch(() => {});
-        return parseJSON(text, cand && cand.finishReason);
+        try {
+          return parseJSON(text, cand && cand.finishReason);
+        } catch (e) {
+          console.warn(`Gemini answer unreadable (finish: ${cand && cand.finishReason}, ${text.length} chars): ${text.slice(0, 200)} ... ${text.slice(-200)}`);
+          // The same request usually gives the same broken answer; one retry with more variety
+          if (!parseRetried) {
+            parseRetried = true;
+            generationConfig.temperature = Math.min(1, temperature + 0.4);
+            continue;
+          }
+          throw e;
+        }
       }
       const errText = await r.text();
       if (r.status === 429 && /per ?day|PerDay|daily/i.test(errText)) {
@@ -80,7 +92,7 @@ function parseJSON(text, finishReason) {
   try { return JSON.parse(text); } catch (e) { /* try harder below */ }
   const start = text.search(/[\[{]/);
   const body = start >= 0 ? text.slice(start) : text;
-  try { return JSON.parse(jsonrepair(body)); } catch (e) { /* give up below */ }
+  try { const v = JSON.parse(jsonrepair(body)); if (v && typeof v === 'object') return v; } catch (e) { /* give up below */ }
   throw new GeminiError(finishReason === 'MAX_TOKENS'
     ? 'The AI answer was too long and got cut off. Try again; long files are analyzed in smaller parts.'
     : 'Could not read the AI answer. Try again.', 'PARSE');
