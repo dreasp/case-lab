@@ -7,9 +7,14 @@ import { cloudStore as store } from './cloud.js';
 import { store as localStore } from './store.js';
 
 const $ = id => document.getElementById(id);
-const VIDEO_EXT = /\.(mp4|mov|m4v)$/i;
-const AUDIO_EXT = /\.(mp3|wav|m4a|aac)$/i;
+const VIDEO_EXT = /\.(mp4|mov|m4v|wmv|avi|mpe?g|mkv|flv|3gp|webm|asf|vob|ts|mts|m2ts)$/i;
+const AUDIO_EXT = /\.(mp3|wav|m4a|aac|wma|ogg|oga|opus|flac|amr)$/i;
 const PHOTO_EXT = /\.(jpe?g|png|webp)$/i;
+const DOC_EXT = /\.pdf$/i;
+// Formats Chrome reads directly; anything else goes through the built-in converter
+const NATIVE_VIDEO = /\.(mp4|mov|m4v)$/i;
+const NATIVE_AUDIO = /\.(mp3|wav|m4a|aac)$/i;
+const AUDIO_DIRECT_MAX = 100 * 1024 * 1024; // bigger recordings are shrunk before uploading
 const SINGLE_PUT_MAX = self.__caselabSinglePutMax || 90 * 1024 * 1024; // files above this go up in parts
 const PART = 50 * 1024 * 1024;
 const WINDOW = 40 * 60; // long videos are analyzed in 40-minute parts
@@ -27,7 +32,7 @@ const gb = b => (b / 1024 ** 3).toFixed(b < 1024 ** 3 ? 2 : 1) + ' GB';
 const mb = b => b >= 1024 ** 3 ? gb(b) : Math.max(0.1, b / 1024 ** 2).toFixed(1) + ' MB';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const newId = () => 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-const kindOf = name => VIDEO_EXT.test(name) ? 'video' : AUDIO_EXT.test(name) ? 'audio' : PHOTO_EXT.test(name) ? 'photo' : null;
+const kindOf = name => VIDEO_EXT.test(name) ? 'video' : AUDIO_EXT.test(name) ? 'audio' : PHOTO_EXT.test(name) ? 'photo' : DOC_EXT.test(name) ? 'document' : null;
 const key = (f, c) => `${cur.id}:${c}:${f.id}`;
 
 // ---------- entry ----------
@@ -90,7 +95,7 @@ async function openCase(id) {
   refreshCases();
 }
 
-function renderCase() {
+async function renderCase() {
   $('newCasePanel').classList.add('hidden');
   $('casePanel').classList.remove('hidden');
   $('caseTitle').textContent = cur.title;
@@ -99,16 +104,16 @@ function renderCase() {
   $('caseContext').value = cur.context || '';
   $('folderName').textContent = cur.folderName ? `Folder: ${cur.folderName}` : '';
   renderMeta();
-  renderFiles();
   renderResearch();
   checkAccess();
+  await renderFiles();
 }
 
 function renderMeta() {
-  const v = cur.files.filter(f => f.type === 'video'), a = cur.files.filter(f => f.type === 'audio'), p = cur.files.filter(f => f.type === 'photo');
-  const hours = cur.files.reduce((n, f) => n + (f.duration || 0), 0);
+  const n = t => cur.files.filter(f => f.type === t).length;
+  const hours = cur.files.reduce((x, f) => x + (f.duration || 0), 0);
   const done = cur.files.filter(f => f.status === 'done').length;
-  $('caseMeta').textContent = `${v.length} videos · ${a.length} audio · ${p.length} photos` +
+  $('caseMeta').textContent = `${n('video')} videos · ${n('audio')} audio · ${n('photo')} photos · ${n('document')} documents` +
     (hours ? ` · ${fmt(hours)} of footage` : '') + ` · ${done} of ${cur.files.length} analyzed`;
 }
 
@@ -183,7 +188,8 @@ function addRecords(list) {
     cur.files.push({ id: r.id || newId(), name: r.name, path: r.path || null, handleKey: r.handleKey || null, size: r.size, lastModified: r.lastModified, type: r.type, status: 'new' });
     added++;
   }
-  cur.files.sort((a, b) => (a.type === b.type ? 0 : a.type === 'video' ? -1 : b.type === 'video' ? 1 : a.type === 'audio' ? -1 : 1) || (a.path || a.name).localeCompare(b.path || b.name, undefined, { numeric: true }));
+  const order = { video: 0, audio: 1, document: 2, photo: 3 };
+  cur.files.sort((a, b) => (order[a.type] - order[b.type]) || (a.path || a.name).localeCompare(b.path || b.name, undefined, { numeric: true }));
   return added;
 }
 
@@ -197,11 +203,14 @@ async function pickFolder() {
   const { out, skipped } = await scanFolder(dir);
   const added = addRecords(out);
   await save();
-  renderCase();
+  await renderCase();
+  await refreshCases();
+  await new Promise(r => requestAnimationFrame(() => setTimeout(r, 50))); // let the screen update first
   const kinds = [...new Set(skipped.map(n => (n.split('.').pop() || '').toUpperCase()))].slice(0, 6).join(', ');
+  const conv = out.filter(r => (r.type === 'video' && !NATIVE_VIDEO.test(r.name)) || (r.type === 'audio' && !NATIVE_AUDIO.test(r.name))).length;
   alert(`Added ${added} file${added === 1 ? '' : 's'} from "${dir.name}".` +
-    (skipped.length ? `\n\n${skipped.length} file(s) were skipped (${kinds}). Videos must be MP4 or MOV, audio MP3/WAV/M4A, photos JPG/PNG/WEBP. iPhone HEIC photos and AVI videos need converting first.` : ''));
-  refreshCases();
+    (conv ? `\n\n${conv} of them (like WMV) will be converted automatically during analysis; that part is a bit slower.` : '') +
+    (skipped.length ? `\n\n${skipped.length} file(s) were skipped (${kinds}). Supported: videos (MP4, MOV, WMV, AVI, MPG, MKV...), audio (WAV, MP3, M4A, WMA...), photos (JPG, PNG, WEBP) and PDF documents. iPhone HEIC photos need converting to JPG first.` : ''));
 }
 
 async function addFileObjects(files, handles = []) {
@@ -223,8 +232,8 @@ async function addFileObjects(files, handles = []) {
   }
   const added = addRecords(recs);
   await save();
-  renderCase();
-  refreshCases();
+  await renderCase();
+  await refreshCases();
   return added;
 }
 
@@ -296,6 +305,8 @@ const STATUS = {
   sending: 'Sending to the AI',
   watching: 'AI is watching',
   describing: 'AI is looking',
+  converting: 'Converting format',
+  reading_doc: 'AI is reading',
   done: 'Analyzed',
   error: 'Problem',
 };
@@ -313,7 +324,7 @@ async function renderFiles() {
     const st = `<div class="st ${f.status === 'done' ? 'done' : f.status === 'error' ? 'error' : busy ? 'busy' : ''}">${esc(STATUS[f.status] || f.status)}${f.status === 'error' && f.error ? ': ' + esc(f.error) : ''}</div>` +
       (busy && lv ? `<div class="mini-bar"><div style="width:${Math.round((lv.frac || 0) * 100)}%"></div></div>` : '') +
       (f.audioNote && f.type === 'video' ? `<div class="fsub">${esc(f.audioNote)}</div>` : '');
-    const desc = f.type === 'photo' ? (f.photo && f.photo.description) : (f.analysis && f.analysis.summary);
+    const desc = f.type === 'photo' ? (f.photo && f.photo.description) : (f.analysis && ((f.type === 'document' && f.analysis.doc_type ? f.analysis.doc_type + ': ' : '') + (f.analysis.summary || '')));
     return `<tr class="${f.status === 'done' ? 'clickable' : ''}" data-id="${f.id}">
       <td>${icon}</td>
       <td><div class="fname">${esc(f.path || f.name)}</div>${desc ? `<div class="fsub">${esc(desc.slice(0, 160))}${desc.length > 160 ? '…' : ''}</div>` : ''}</td>
@@ -398,16 +409,30 @@ async function audioDuration(file) {
 let localLock = Promise.resolve();
 function withLocalLock(fn) { const run = localLock.then(fn, fn); localLock = run.catch(() => {}); return run; }
 
+async function converted(file, f, video) {
+  setStatus(f, 'converting', 0);
+  const { convertForAnalysis } = await import('./convert.js');
+  return convertForAnalysis(file, { video, onProgress: fr => { live.set(f.id, { frac: fr }); renderSoon(); } });
+}
+
 async function ensureCopies(f) {
   if (f.type === 'video' && f.proxyKey) return;
   if (f.type === 'audio' && f.audioKey) return;
   if (f.type === 'photo' && f.copyKey) return;
+  if (f.type === 'document' && f.docKey) return;
   await withLocalLock(async () => {
     if (stopFlag) throw new Error('Stopped');
     const file = await getLocalFile(f);
     if (f.type === 'video') {
-      setStatus(f, 'reading', 0);
-      const r = await makeCopies(file, fr => { live.set(f.id, { frac: fr }); renderSoon(); });
+      let r;
+      if (NATIVE_VIDEO.test(f.name)) {
+        setStatus(f, 'reading', 0);
+        // If the fast reader can't handle this particular file, the converter takes over
+        try { r = await makeCopies(file, fr => { live.set(f.id, { frac: fr }); renderSoon(); }); }
+        catch (e) { if (stopFlag) throw e; r = await converted(file, f, true); }
+      } else {
+        r = await converted(file, f, true);
+      }
       setStatus(f, 'uploading', 0);
       const total = r.blob.size + (r.audio ? r.audio.size : 0);
       let done = 0;
@@ -420,10 +445,24 @@ async function ensureCopies(f) {
         duration: r.info.duration, width: r.info.width, height: r.info.height, audioNote: r.info.audioNote || null,
       });
     } else if (f.type === 'audio') {
+      let blob = file;
+      if (!NATIVE_AUDIO.test(f.name) || file.size > AUDIO_DIRECT_MAX) {
+        // Convert unusual formats, and shrink very long recordings, to a small sound copy
+        const r = await converted(file, f, false);
+        if (!r.audio) throw new Error('No sound could be read from this file.');
+        blob = r.audio;
+        f.duration = r.info.duration;
+      } else {
+        f.duration = await audioDuration(file);
+      }
       setStatus(f, 'uploading', 0);
-      f.duration = await audioDuration(file);
-      await uploadBlob(key(f, 'a'), file, fr => { live.set(f.id, { frac: fr }); renderSoon(); });
+      await uploadBlob(key(f, 'a'), blob, fr => { live.set(f.id, { frac: fr }); renderSoon(); });
       f.audioKey = key(f, 'a');
+    } else if (f.type === 'document') {
+      if (file.size > 45 * 1024 * 1024) throw new Error('This PDF is over 45 MB. Split it into smaller PDFs (for example with ilovepdf.com) and add the parts.');
+      setStatus(f, 'uploading', 0);
+      await uploadBlob(key(f, 'x'), file, fr => { live.set(f.id, { frac: fr }); renderSoon(); });
+      f.docKey = key(f, 'x');
     } else {
       setStatus(f, 'uploading', 0);
       const c = await photoCopies(file);
@@ -462,12 +501,12 @@ async function ensureGeminiFile(f) {
     if (st.state === 'ACTIVE') return f.gfile;
   }
   setStatus(f, 'sending');
-  const up = await api('case/gemini-upload', { key: f.proxyKey, name: f.name });
+  const up = await api('case/gemini-upload', { key: f.type === 'document' ? f.docKey : f.proxyKey, name: f.name, mime: f.type === 'document' ? 'application/pdf' : 'video/mp4' });
   f.gfile = { name: up.name, uri: up.uri, mime: up.mime, at: Date.now() };
   for (let i = 0; i < 120; i++) {
     const st = await api('case/gemini-file/' + up.name.split('/').pop());
     if (st.state === 'ACTIVE') { await save(); return f.gfile; }
-    if (st.state === 'FAILED' || st.state === 'GONE') throw new Error('Gemini could not process this video' + (st.error ? ': ' + st.error : ''));
+    if (st.state === 'FAILED' || st.state === 'GONE') throw new Error('Gemini could not process this file' + (st.error ? ': ' + st.error : ''));
     await sleep(3000);
   }
   throw new Error('Gemini took too long to prepare the video.');
@@ -492,7 +531,12 @@ function mergeParts(parts) {
 async function ensureAnalysis(f) {
   if (f.analysis) return;
   const utterances = (f.transcript && f.transcript.utterances) || [];
-  if (f.type === 'audio') {
+  if (f.type === 'document') {
+    await ensureGeminiFile(f);
+    setStatus(f, 'reading_doc');
+    const r = await api('case/analyze-document', { uri: f.gfile.uri, fileName: f.path || f.name, title: cur.title, context: cur.context });
+    f.analysis = r.result;
+  } else if (f.type === 'audio') {
     setStatus(f, 'watching');
     const r = await api('case/analyze-audio', { title: cur.title, fileName: f.name, duration: f.duration, context: cur.context, utterances });
     f.analysis = mergeParts([r.result]);
@@ -562,9 +606,9 @@ async function analyzeAll() {
   }
   const todo = cur.files.filter(f => f.status !== 'done' || (f.type === 'photo' && !f.photo));
   if (!todo.length) return alert('Every file is already analyzed. Open the Research tab to build the case document.');
-  const hours = todo.filter(f => f.type !== 'photo').reduce((n, f) => n + (f.duration || 0), 0) / 3600;
-  const unknownLen = todo.some(f => f.type !== 'photo' && !f.duration);
-  if (!confirm(`Analyze ${todo.length} file(s)?\n\nEstimated AI cost: ${unknownLen ? 'about $0.30 to $0.45 per hour of footage' : '$' + (hours * 0.45).toFixed(2) + ' or less'}, plus less than a cent per photo.\n\nYou can keep working in other tabs, but keep this tab open. Progress is saved as it goes.`)) return;
+  const hours = todo.filter(f => f.type === 'video' || f.type === 'audio').reduce((n, f) => n + (f.duration || 0), 0) / 3600;
+  const unknownLen = todo.some(f => (f.type === 'video' || f.type === 'audio') && !f.duration);
+  if (!confirm(`Analyze ${todo.length} file(s)?\n\nEstimated AI cost: ${unknownLen ? 'about $0.30 to $0.45 per hour of footage' : '$' + (hours * 0.45).toFixed(2) + ' or less'}, plus less than a cent per photo or document.\n\nYou can keep working in other tabs, but keep this tab open. Progress is saved as it goes.`)) return;
   running = true; stopFlag = false;
   $('analyzeAll').disabled = true;
   const total = todo.length;
@@ -603,6 +647,7 @@ async function analyzeAll() {
 function stop() {
   stopFlag = true;
   if (activeWorker) { activeWorker.postMessage({ type: 'cancel' }); }
+  import('./convert.js').then(m => m.stopConverter()).catch(() => {});
 }
 
 // ---------- research ----------
@@ -614,7 +659,10 @@ async function buildMaster() {
   try {
     const r = await api('case/master', {
       title: cur.title, context: cur.context,
-      files: files.map(f => ({
+      files: files.map(f => f.type === 'document' ? ({
+        id: f.id, name: f.path || f.name, type: 'document', docType: f.analysis.doc_type, date: f.analysis.date,
+        summary: f.analysis.summary, facts: f.analysis.key_facts, events: f.analysis.timeline, quotes: f.analysis.quotes, uncertain: f.analysis.uncertain,
+      }) : ({
         id: f.id, name: f.path || f.name, type: f.type, duration: f.duration, clock: f.analysis.clock_start, camera: f.analysis.camera,
         summary: f.analysis.summary, speakers: speakerMap(f), moments: f.analysis.moments, uncertain: f.analysis.uncertain,
       })),
@@ -655,7 +703,10 @@ function downloadDoc() {
   if (!m) return;
   const txt = s => esc(s || '');
   const at = (id, t) => `<i>(${txt(fileLabel(id))} at ${fmt(t || 0)})</i>`;
-  const files = cur.files.filter(f => f.analysis).map(f => `<h3>${txt(f.path || f.name)}</h3>
+  const files = cur.files.filter(f => f.analysis).map(f => f.type === 'document' ? `<h3>${txt(f.path || f.name)}</h3>
+    <p><b>${txt(f.analysis.doc_type)}</b>${f.analysis.date ? ` · ${txt(f.analysis.date)}` : ''}</p>
+    <p>${txt(f.analysis.summary)}</p>
+    <ul>${(f.analysis.key_facts || []).map(x => `<li>${txt(x)}</li>`).join('')}</ul>` : `<h3>${txt(f.path || f.name)}</h3>
     <p><b>${txt(f.analysis.camera)}</b>${f.analysis.clock_start ? ` · starts ${txt(f.analysis.clock_start)}` : ''} · ${fmt(f.duration || 0)}</p>
     <p>${txt(f.analysis.summary)}</p>
     <ul>${(f.analysis.moments || []).map(mo => `<li>[${fmt(mo.start)}–${fmt(mo.end)}] <b>${txt(mo.title)}</b>: ${txt(mo.description)}${mo.quote ? ` “${txt(mo.quote)}”` : ''}</li>`).join('')}</ul>`).join('');
@@ -694,9 +745,9 @@ async function openViewer(f, t = 0) {
   vf = f;
   const video = $('fvVideo'), img = $('fvImage');
   $('fvName').textContent = f.path || f.name;
-  $('fvMeta').textContent = [f.type, f.duration ? fmt(f.duration) : '', f.analysis && f.analysis.clock_start ? 'starts ' + f.analysis.clock_start : '', f.analysis && f.analysis.camera].filter(Boolean).join(' · ');
+  $('fvMeta').textContent = [f.type, f.duration && f.type !== 'document' ? fmt(f.duration) : '', f.analysis && f.analysis.clock_start ? 'starts ' + f.analysis.clock_start : '', f.analysis && f.analysis.camera].filter(Boolean).join(' · ');
   if (vObjUrl) { URL.revokeObjectURL(vObjUrl); vObjUrl = null; }
-  video.classList.toggle('hidden', f.type === 'photo');
+  video.classList.toggle('hidden', f.type === 'photo' || f.type === 'document');
   img.classList.toggle('hidden', f.type !== 'photo');
   $('fvSource').textContent = '';
   let src = null;
@@ -705,15 +756,17 @@ async function openViewer(f, t = 0) {
     src = vObjUrl = URL.createObjectURL(file);
     $('fvSource').textContent = 'Playing your original file.';
   } catch (e) {
-    const k = f.type === 'photo' ? f.copyKey : f.type === 'video' ? f.proxyKey : f.audioKey;
+    const k = f.type === 'photo' ? f.copyKey : f.type === 'video' ? f.proxyKey : f.type === 'document' ? f.docKey : f.audioKey;
     if (k) { src = (await signedUrls([k]))[0]; $('fvSource').textContent = f.type === 'video' ? 'Original not available on this computer: showing the low-resolution analysis copy (1 frame per second, no sound).' : 'Original not available on this computer: showing the analysis copy.'; }
   }
-  if (f.type === 'photo') img.src = src || ''; else { video.src = src || ''; video.currentTime = t || 0; }
+  if (f.type === 'document') {
+    $('fvSource').innerHTML = src ? `<a href="${esc(src)}" target="_blank" rel="noopener">Open the PDF</a>` : '';
+  } else if (f.type === 'photo') img.src = src || ''; else { video.src = src || ''; video.currentTime = t || 0; }
   const a = f.analysis;
   $('fvSummary').innerHTML = f.type === 'photo'
     ? (f.photo ? `<p>${esc(f.photo.description)}</p>${f.photo.text ? `<p class="muted">Text: ${esc(f.photo.text)}</p>` : ''}${f.photo.sensitive ? '<p class="sens">Marked sensitive</p>' : ''}` : '')
     : (a ? `<p>${esc(a.summary)}</p>${(a.uncertain || []).length ? `<p class="muted small-text"><strong>Check:</strong> ${esc(a.uncertain.join(' · '))}</p>` : ''}` : '');
-  $('fvTabs').classList.toggle('hidden', f.type === 'photo');
+  $('fvTabs').classList.toggle('hidden', f.type === 'photo' || f.type === 'document');
   vTab = f.transcript ? 'transcript' : 'moments';
   document.querySelectorAll('#fvTabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === vTab));
   renderViewerList();
@@ -723,6 +776,17 @@ async function openViewer(f, t = 0) {
 
 function renderViewerList() {
   const f = vf;
+  if (f && f.type === 'document') {
+    const a = f.analysis || {};
+    $('fvSpeakers').innerHTML = '';
+    $('fvList').innerHTML = `
+      <h4>${esc(a.doc_type || 'Document')}${a.date ? ' · ' + esc(a.date) : ''}</h4>
+      <h4>Key facts</h4>${(a.key_facts || []).map(x => `<div class="line"><span class="tm">•</span><span>${esc(x)}</span></div>`).join('') || '<p class="muted">None</p>'}
+      <h4>Timeline</h4>${(a.timeline || []).map(e => `<div class="line wide"><span class="tm">${esc(e.when || '')}</span><span>${esc(e.what || '')}</span></div>`).join('') || '<p class="muted">None</p>'}
+      <h4>Quotes</h4>${(a.quotes || []).map(q => `<div class="line"><span class="tm">${q.page ? 'p. ' + esc(q.page) : ''}</span><span><span class="who">${esc(q.who || '')}:</span>“${esc(q.quote || '')}”</span></div>`).join('') || '<p class="muted">None</p>'}
+      <h4>People</h4>${(a.people || []).map(x => `<div class="line"><span class="tm"></span><span><span class="who">${esc(x.who || '')}</span> ${esc(x.role || '')}</span></div>`).join('') || '<p class="muted">None</p>'}`;
+    return;
+  }
   if (!f || f.type === 'photo') { $('fvList').innerHTML = ''; $('fvSpeakers').innerHTML = ''; return; }
   const names = speakerMap(f);
   const letters = [...new Set(((f.transcript && f.transcript.utterances) || []).map(u => u.sp))];
@@ -842,7 +906,7 @@ function wire() {
     if (!confirm('Delete this case\'s analysis copies from the cloud to free space?\n\nTranscripts, research and thumbnails stay. Your original files on your computer are not touched. You would only need the copies again to re-analyze a file.')) return;
     try {
       const r = await api('cloud/remove-footage', { id: cur.id });
-      for (const f of cur.files) { f.proxyKey = null; f.audioKey = null; f.copyKey = null; f.gfile = null; }
+      for (const f of cur.files) { f.proxyKey = null; f.audioKey = null; f.copyKey = null; f.docKey = null; f.gfile = null; }
       await save();
       refreshStorage();
       alert(`Freed ${mb(r.freedBytes || 0)}.`);

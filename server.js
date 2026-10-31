@@ -36,6 +36,9 @@ app.get('/vendor/mp4box.js', (req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/mp4box/dist/mp4box.all.min.js')));
 app.get('/vendor/mp4-muxer.js', (req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/mp4-muxer/build/mp4-muxer.js')));
+// In-browser converter for formats Chrome can't play (WMV, AVI, MPG...); cached by the browser
+app.use('/vendor/ffmpeg', express.static(path.join(__dirname, 'node_modules/@ffmpeg/ffmpeg/dist/esm'), { maxAge: '30d' }));
+app.use('/vendor/ffmpeg-core', express.static(path.join(__dirname, 'node_modules/@ffmpeg/core/dist/esm'), { maxAge: '30d' }));
 
 app.use('/api', auth.router);
 app.use('/api', auth.requireLogin, broll.router);

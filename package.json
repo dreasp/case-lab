@@ -11,6 +11,8 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@ffmpeg/core": "^0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.15",
     "aws4fetch": "^1.0.20",
     "cfb": "1.2.2",
     "express": "4.21.2",

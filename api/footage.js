@@ -74,12 +74,12 @@ const G_KEY = () => String(process.env.GEMINI_API_KEY || '').trim();
 
 router.post('/case/gemini-upload', async (req, res) => {
   try {
-    const { key, name } = req.body || {};
+    const { key, name, mime } = req.body || {};
     if (!cloud.KEY_RE.test(String(key || ''))) return res.status(400).json({ error: 'Bad key' });
     const src = await fetch(await cloud.signedUrl(key, 'GET'));
     if (!src.ok) throw new Error('Could not read the analysis copy from storage (' + src.status + ')');
     const size = Number(src.headers.get('content-length'));
-    const type = src.headers.get('content-type') || 'video/mp4';
+    const type = /^(video\/mp4|application\/pdf)$/.test(String(mime)) ? mime : (src.headers.get('content-type') || 'video/mp4');
     const start = await fetch(`${G_BASE()}/upload/v1beta/files`, {
       method: 'POST',
       headers: {
@@ -198,6 +198,34 @@ Return JSON:
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// PDF documents (police reports, warrants, autopsy reports...): Gemini reads every page, scans too
+router.post('/case/analyze-document', async (req, res) => {
+  try {
+    const { uri, fileName, context, title } = req.body || {};
+    const prompt = `${STYLE}
+
+CASE: ${title || ''}
+CASE CONTEXT:
+"""${String(context || '').slice(0, 8000)}"""
+
+DOCUMENT: ${fileName}. Read every page (including scanned or handwritten pages). Return JSON:
+{
+  "doc_type": what kind of document it is (e.g. "Police incident report", "Search warrant", "Autopsy report", "Witness statement", "Court ruling"),
+  "date": the main date of the document as written, or null,
+  "summary": 3 to 6 sentences,
+  "key_facts": [ the important facts, one sentence each, with page numbers like "(p. 3)" ],
+  "people": [ { "who": name as written, "role": role in the case } ],
+  "timeline": [ { "when": date/time as written, "what": one sentence } ] for every dated or timed event in the document,
+  "quotes": [ { "who": speaker or writer, "quote": exact words, "page": page number } ] for statements worth quoting,
+  "redactions": short note on what is blacked out, or "",
+  "sensitive": [ graphic or private details to handle carefully, with page ],
+  "uncertain": [ unreadable parts or things to double-check ]
+}`;
+    const out = await generateJSON([{ file_data: { file_uri: uri, mime_type: 'application/pdf' } }, { text: prompt }], { temperature: 0.2 });
+    res.json({ result: out });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Photos: short descriptions (the AI sees the small analysis copies)
 router.post('/case/photos', async (req, res) => {
   try {
@@ -229,7 +257,14 @@ Describe each numbered photo from this case file. Return a JSON array, one objec
 router.post('/case/master', async (req, res) => {
   try {
     const { title, context, files, photos } = req.body || {};
-    const fileText = (files || []).map(f => `=== FILE ${f.id}: ${f.name} (${f.type}, ${fmtT(f.duration || 0)}${f.clock ? ', on-screen clock at start: ' + f.clock : ''}${f.camera ? ', ' + f.camera : ''})
+    const fileText = (files || []).map(f => f.type === 'document' ? `=== FILE ${f.id}: ${f.name} (document: ${f.docType || 'document'}${f.date ? ', dated ' + f.date : ''})
+Summary: ${f.summary || ''}
+Key facts:
+${(f.facts || []).map(x => '- ' + x).join('\n')}
+Dated events:
+${(f.events || []).map(e => `- ${e.when || '?'}: ${e.what}`).join('\n')}
+Quotes: ${(f.quotes || []).map(q => `${q.who}: "${q.quote}" (p. ${q.page || '?'})`).join(' | ')}
+Uncertain: ${(f.uncertain || []).join('; ')}` : `=== FILE ${f.id}: ${f.name} (${f.type}, ${fmtT(f.duration || 0)}${f.clock ? ', on-screen clock at start: ' + f.clock : ''}${f.camera ? ', ' + f.camera : ''})
 Summary: ${f.summary || ''}
 Speakers: ${JSON.stringify(f.speakers || {})}
 Key moments:
@@ -242,7 +277,7 @@ CASE: ${title || ''}
 CASE CONTEXT:
 """${String(context || '').slice(0, 10000)}"""
 
-Below is the analysis of every file in this case (videos, audio recordings) and the photo descriptions.
+Below is the analysis of every file in this case (videos, audio recordings, documents such as police reports) and the photo descriptions. Documents give dates, names and facts; use them to place the footage in time and to name people correctly. For document files, use "t": 0.
 Put everything together into one research document. Order events by when they really happened, using the on-screen clocks, what is said and the case context. When files overlap in time (several officers' bodycams), merge them.
 
 ${fileText}

@@ -226,10 +226,12 @@ table.files tr.clickable:hover td { background: var(--panel); }
 .fv-right .tabs { margin-top: 0; }
 .fv-speakers { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
 .spk { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); cursor: pointer; }
+.fv-list h4 { margin: 12px 0 4px; }
 .fv-list { max-height: 56vh; overflow: auto; display: grid; gap: 2px; padding-right: 4px; }
 .line { display: grid; grid-template-columns: 52px 1fr; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; line-height: 1.45; }
 .line:hover { background: var(--panel-2); }
 .line.now { background: #1b1a16; outline: 1px solid var(--gold); }
+.line.wide { grid-template-columns: 130px 1fr; }
 .line .tm { color: var(--muted); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; }
 .line .who { font-weight: 600; margin-right: 4px; }
 .imp { color: var(--gold); letter-spacing: 1px; font-size: 11px; }
