@@ -292,3 +292,4 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
   .cap .txt { grid-column: 1 / -1; grid-row: 2; }
   .project-head { flex-direction: column; }
 }
+.row-btns { display: flex; gap: 8px; align-items: flex-start; }

@@ -126,9 +126,39 @@ const STYLE = `You are a meticulous research assistant for a true crime YouTube 
 
 const fmtT = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
 
-function transcriptText(utt, from, to) {
+// Transcript lines labeled with times counted from zero (the start of the part being watched)
+function transcriptText(utt, from, to, zero = 0) {
   return (utt || []).filter(u => u.e >= from && u.s <= to)
-    .map(u => `[${fmtT(u.s)}] Speaker ${u.sp}: ${u.text}`).join('\n').slice(0, 120000);
+    .map(u => `[${fmtT(Math.max(0, u.s - zero))}] Speaker ${u.sp}: ${u.text}`).join('\n').slice(0, 120000);
+}
+
+// "1:02:03", "4:05" or 245 -> seconds. The AI is asked for clock-style strings because it
+// converts long times to seconds badly.
+function parseTime(v) {
+  if (typeof v === 'number') return isFinite(v) ? v : null;
+  if (typeof v !== 'string') return null;
+  const m = v.trim().match(/^(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/);
+  if (m) return (+m[1] || 0) * 3600 + +m[2] * 60 + +m[3];
+  const n = parseFloat(v);
+  return isFinite(n) ? n : null;
+}
+
+// Turns the AI's part-relative times into seconds from the start of the file
+function fixTimes(out, from, len) {
+  if (!out || typeof out !== 'object') return out;
+  const abs = v => {
+    let t = parseTime(v);
+    if (t == null) return from;
+    // a time already counted from the start of the file
+    if (from > 0 && t > len + 30 && t >= from - 30 && t <= from + len + 30) t -= from;
+    return from + Math.min(Math.max(0, t), len);
+  };
+  for (const e of out.events || []) e.t = abs(e.t);
+  for (const k of ['moments', 'sensitive']) for (const m of out[k] || []) {
+    m.start = abs(m.start);
+    m.end = Math.max(m.start, abs(m.end));
+  }
+  return out;
 }
 
 // One part of a video (long videos are analyzed in 40-minute parts)
@@ -136,30 +166,32 @@ router.post('/case/analyze-video', async (req, res) => {
   try {
     const { uri, mime, fileName, duration, context, utterances, from = 0, to, title } = req.body || {};
     const end = Math.min(Number(to) || duration, duration);
-    const transcript = transcriptText(utterances, from, end);
+    const len = Math.max(1, end - from);
+    const transcript = transcriptText(utterances, from, end, from);
     const prompt = `${STYLE}
 
 CASE: ${title || ''}
 CASE CONTEXT (names, roles, known facts, written by the researcher):
 """${String(context || '').slice(0, 8000)}"""
 
-FILE: ${fileName} (${fmtT(duration)} long). You are watching the part from ${fmtT(from)} to ${fmtT(end)}.
-The video is shown at 1 frame per second without sound. Here is the speaker-labeled transcript of this part (times are from the start of the file; speaker letters come from voice separation and may need names):
+FILE: ${fileName} (${fmtT(duration)} long). You are watching one part of it: ${fmtT(len)} long.
+TIMES: count every time from the start of THIS PART, which is 0:00 and ends at ${fmtT(len)}. The transcript below uses the same times. Write every time as a string like "4:05" (minutes:seconds), never as a number of seconds.
+The video is shown at 1 frame per second without sound. Here is the speaker-labeled transcript of this part (speaker letters come from voice separation and may need names):
 """
 ${transcript || '(no speech in this part)'}
 """
 
 Return JSON:
 {
-  "clock_start": on-screen date and time printed on the footage (bodycam/dashcam overlay) at ${fmtT(from)}, written exactly like "2023-03-14 21:04:12", or null if none is visible,
+  "clock_start": on-screen date and time printed on the footage (bodycam/dashcam overlay) at 0:00 of this part, written exactly like "2023-03-14 21:04:12", or null if none is visible,
   "camera": who is wearing or holding the camera, or what kind of camera it is (e.g. "Officer Diaz bodycam", "patrol car dashcam", "interview room camera"),
   "speakers": { "A": "name or role of speaker A", ... } for every speaker letter in the transcript (use case context names when clearly identifiable, otherwise roles like "Officer (camera wearer)", "Woman in red jacket"),
   "summary": 3 to 6 sentences about what happens in this part,
-  "events": [ { "t": seconds from start of file, "what": one sentence } ] for every notable change in what is seen or said, about one every 15 to 60 seconds,
-  "moments": [ { "start": seconds, "end": seconds, "title": short title, "description": 1-2 sentences, "importance": 1 to 5 (5 = essential to the story), "kind": "dialogue" | "action" | "reveal" | "emotional" | "context", "quote": the key line said, copied from the transcript, or "" } ] for the moments worth showing in a video (usually 10 to 40 seconds each),
+  "events": [ { "t": "m:ss", "what": one sentence } ] for every notable change in what is seen or said, about one every 15 to 60 seconds,
+  "moments": [ { "start": "m:ss", "end": "m:ss", "title": short title, "description": 1-2 sentences, "importance": 1 to 5 (5 = essential to the story), "kind": "dialogue" | "action" | "reveal" | "emotional" | "context", "quote": the key line said, copied from the transcript, or "" } ] for the moments worth showing in a video (usually 10 to 40 seconds each),
   "people": [ { "who": name or role, "description": what they look like / do } ],
   "visible_text": [ important text seen on screen (signs, documents, plates, addresses) ],
-  "sensitive": [ { "start": seconds, "end": seconds, "note": what is graphic or private (injuries, bodies, minors, nudity, personal info) } ],
+  "sensitive": [ { "start": "m:ss", "end": "m:ss", "note": what is graphic or private (injuries, bodies, minors, nudity, personal info) } ],
   "uncertain": [ things a researcher should double-check ]
 }`;
     const parts = [
@@ -168,6 +200,7 @@ Return JSON:
     ];
     const out = await generateJSON(parts, { temperature: 0.2, images: true });
     // a cut-off answer can end with a half-written item: drop those
+    fixTimes(out, Number(from) || 0, len);
     if (out && Array.isArray(out.moments)) out.moments = out.moments.filter(m => m && m.title && m.start != null && m.end != null);
     if (out && Array.isArray(out.events)) out.events = out.events.filter(e => e && (e.what || e.description || e.text));
     res.json({ result: out });
@@ -184,7 +217,8 @@ CASE: ${title || ''}
 CASE CONTEXT:
 """${String(context || '').slice(0, 8000)}"""
 
-FILE: ${fileName} (audio only, ${fmtT(duration)} long). Speaker-labeled transcript:
+FILE: ${fileName} (audio only, ${fmtT(duration)} long). Write every time as a string like "4:05" (minutes:seconds), copied from the transcript labels, never as a number of seconds.
+Speaker-labeled transcript:
 """
 ${transcriptText(utterances, 0, duration + 1) || '(no speech)'}
 """
@@ -194,10 +228,10 @@ Return JSON:
   "camera": "audio recording" plus what kind (e.g. "911 call", "jail phone call"),
   "speakers": { "A": "name or role", ... },
   "summary": 3 to 6 sentences,
-  "events": [ { "t": seconds, "what": one sentence } ],
-  "moments": [ { "start", "end", "title", "description", "importance": 1-5, "kind", "quote" } ],
-  "people": [ { "who", "description" } ], "visible_text": [], "sensitive": [ { "start", "end", "note" } ], "uncertain": [] }`;
-    res.json({ result: await generateJSON([{ text: prompt }], { temperature: 0.2 }) });
+  "events": [ { "t": "m:ss", "what": one sentence } ],
+  "moments": [ { "start": "m:ss", "end": "m:ss", "title", "description", "importance": 1-5, "kind", "quote" } ],
+  "people": [ { "who", "description" } ], "visible_text": [], "sensitive": [ { "start": "m:ss", "end": "m:ss", "note" } ], "uncertain": [] }`;
+    res.json({ result: fixTimes(await generateJSON([{ text: prompt }], { temperature: 0.2 }), 0, Math.max(1, Number(duration) || 1)) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -281,7 +315,9 @@ CASE CONTEXT:
 """${String(context || '').slice(0, 10000)}"""
 
 Below is the analysis of every file in this case (videos, audio recordings, documents such as police reports) and the photo descriptions. Documents give dates, names and facts; use them to place the footage in time and to name people correctly. For document files, use "t": 0.
-Put everything together into one research document. Order events by when they really happened, using the on-screen clocks, what is said and the case context. When files overlap in time (several officers' bodycams), merge them.
+Put everything together into one research document. Order events by when they really happened, using the on-screen clocks, what is said and the case context. When files overlap in time (several officers' bodycams, or two camera angles of the same room), merge them and don't repeat the same event twice.
+Times inside a file are written like "1:02:03" or "4:05" (from the start of that file). Copy them in the same style, never as a number of seconds.
+In sentences, call files by what they show (e.g. "the interview room video"), never by their file id; file ids only go in the "file" fields.
 
 ${fileText}
 
@@ -292,14 +328,59 @@ Return JSON:
 {
   "overview": one paragraph summary of the whole incident as shown in the files,
   "people": [ { "name": name or role, "role": who they are in the case, "appears_in": [file ids] } ],
-  "timeline": [ { "when": real date/time if known else "", "file": file id, "t": seconds in that file, "what": one sentence } ] in real chronological order,
-  "story_beats": [ { "title": short title, "description": what happens and why it matters, "sources": [ { "file": file id, "start": seconds, "end": seconds } ] } ] the 6 to 15 beats a documentary would tell, in story order,
-  "key_quotes": [ { "file": file id, "t": seconds, "speaker": name or role, "quote": exact words } ],
+  "timeline": [ { "when": real date/time if known from a document or what is said, else "", "file": file id, "t": "h:mm:ss" or "m:ss", "what": one sentence } ] in real chronological order,
+  "story_beats": [ { "title": short title, "description": what happens and why it matters, "sources": [ { "file": file id, "start": "m:ss", "end": "m:ss" } ] (the 1 to 4 best clips, not every mention) } ] the 6 to 15 beats a documentary would tell, in story order,
+  "key_quotes": [ { "file": file id, "t": "m:ss", "speaker": name or role, "quote": exact words } ],
   "open_questions": [ things the footage doesn't answer or that should be checked ],
-  "content_warnings": [ graphic or sensitive material to handle carefully, with file and time ]
+  "content_warnings": [ { "file": file id, "t": "m:ss", "note": graphic or sensitive material to handle carefully } ]
 }`;
-    res.json({ result: await generateJSON([{ text: prompt }], { temperature: 0.3 }) });
+    const out = await generateJSON([{ text: prompt }], { temperature: 0.3 });
+    res.json({ result: tidyMaster(out, files || []) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-module.exports = { router };
+// Real clock time of a moment: the file's on-screen start clock plus the time into the file
+function clockAt(clock, t) {
+  if (!clock) return null;
+  const d = String(clock).match(/(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  const tm = String(clock).match(/(\d{1,2}):(\d{2}):(\d{2})(?:\s*([AP]M))?/i);
+  if (!d || !tm) return null;
+  const [y, mo, da] = d[1] ? [+d[1], +d[2], +d[3]] : [+d[6], +d[4], +d[5]];
+  let h = +tm[1];
+  if (tm[4]) h = h % 12 + (/p/i.test(tm[4]) ? 12 : 0);
+  return Date.UTC(y, mo - 1, da, h, +tm[2], +tm[3]) + Math.round(t || 0) * 1000;
+}
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const fmtClock = ms => { const d = new Date(ms); return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}:${String(d.getUTCSeconds()).padStart(2, '0')}`; };
+
+// Times to seconds, real clock times worked out by the app (not guessed by the AI),
+// timeline in clock order, and file ids in sentences swapped for file names
+function tidyMaster(m, files) {
+  if (!m || typeof m !== 'object') return m;
+  const byId = Object.fromEntries(files.map(f => [String(f.id), f]));
+  const sec = (v, f) => { const t = parseTime(v); return t == null ? 0 : Math.max(0, Math.min(t, (f && f.duration) || t)); };
+  const names = s => typeof s === 'string' ? s.replace(/\b[a-z0-9]{10,16}\b/g, w => byId[w] ? byId[w].name : w) : s;
+  for (const e of m.timeline || []) {
+    const f = byId[e.file];
+    e.t = sec(e.t, f);
+    const at = f && clockAt(f.clock, e.t);
+    if (at) { e.at = at; e.when = fmtClock(at); }
+  }
+  // put the clocked events in clock order, leaving the others where the AI placed them
+  const tl = m.timeline || [];
+  const slots = tl.map((e, i) => e.at ? i : -1).filter(i => i >= 0);
+  const sorted = slots.map(i => tl[i]).sort((a, b) => a.at - b.at);
+  slots.forEach((i, k) => { tl[i] = sorted[k]; });
+  for (const b of m.story_beats || []) for (const src of b.sources || []) { src.start = sec(src.start, byId[src.file]); src.end = sec(src.end, byId[src.file]); }
+  for (const q of m.key_quotes || []) q.t = sec(q.t, byId[q.file]);
+  m.content_warnings = (m.content_warnings || []).map(c => typeof c === 'string' ? { note: c } : { ...c, t: sec(c.t, byId[c.file]), note: c.note || c.description || '' });
+  m.overview = names(m.overview);
+  m.open_questions = (m.open_questions || []).map(names);
+  for (const p of m.people || []) p.role = names(p.role);
+  for (const b of m.story_beats || []) b.description = names(b.description);
+  for (const e of tl) e.what = names(e.what);
+  for (const c of m.content_warnings) c.note = names(c.note);
+  return m;
+}
+
+module.exports = { router, parseTime, fixTimes, clockAt, tidyMaster };

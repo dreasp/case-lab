@@ -554,6 +554,41 @@ async function watchPart(f, utterances, from, to) {
   }
 }
 
+// Puts a quote at the transcript line where it is really said. The AI often gets long times
+// wrong, but the transcript times come straight from the audio, so quotes can be placed exactly.
+const words = s => String(s || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(w => w.length > 1);
+function findQuote(f, quote, near) {
+  const utt = (f.transcript && f.transcript.utterances) || [];
+  const q = words(quote).slice(0, 14);
+  if (q.length < 3 || !utt.length) return null;
+  let best = null, bestScore = 0;
+  for (let i = 0; i < utt.length; i++) {
+    // the quote has to start on this line, but can run over into the next one
+    const own = new Set(words(utt[i].text));
+    if (q.slice(0, 3).filter(x => own.has(x)).length < 2) continue;
+    const w = new Set([...own, ...words(utt[i + 1] ? utt[i + 1].text : '')]);
+    const score = q.filter(x => w.has(x)).length / q.length;
+    if (score > bestScore + 0.001 || (Math.abs(score - bestScore) < 0.001 && best && Math.abs(utt[i].s - near) < Math.abs(best.s - near))) { best = utt[i]; bestScore = score; }
+  }
+  return bestScore >= 0.6 ? best : null;
+}
+function snapQuotes(f) {
+  const a = f.analysis;
+  if (!a || f.type === 'document' || f.type === 'photo') return false;
+  let changed = false;
+  for (const m of a.moments || []) {
+    if (!m.quote) continue;
+    const u = findQuote(f, m.quote, m.start);
+    if (!u || (m.start >= u.s - 3 && m.start <= u.e + 3)) continue;
+    const len = Math.max(3, Math.min(60, (m.end || 0) - (m.start || 0)));
+    m.start = u.s;
+    m.end = Math.min(f.duration || Infinity, Math.max(u.e, u.s + len));
+    changed = true;
+  }
+  if (changed) a.moments.sort((x, y) => (x.start || 0) - (y.start || 0));
+  return changed;
+}
+
 async function ensureAnalysis(f) {
   if (f.analysis) return;
   const utterances = (f.transcript && f.transcript.utterances) || [];
@@ -584,6 +619,7 @@ async function ensureAnalysis(f) {
     delete f.analysisParts;
     delete f.analysisWindow;
   }
+  snapQuotes(f);
   await save();
 }
 
@@ -682,6 +718,7 @@ async function buildMaster() {
   if (!files.length) return alert('Analyze the files first (Files tab).');
   $('buildMaster').disabled = true;
   $('researchBody').innerHTML = '<p class="muted">Putting the case together…</p>';
+  if (files.map(snapQuotes).some(Boolean)) await save();
   try {
     const r = await api('case/master', {
       title: cur.title, context: cur.context,
@@ -694,7 +731,9 @@ async function buildMaster() {
       })),
       photos: cur.files.filter(f => f.photo).map(f => ({ id: f.id, name: f.path || f.name, description: f.photo.description })),
     });
-    cur.master = { ...r.result, builtAt: Date.now() };
+    const m = r.result;
+    for (const q of m.key_quotes || []) { const f = fileById(q.file); const u = f && findQuote(f, q.quote, q.t); if (u && !(q.t >= u.s - 3 && q.t <= u.e + 3)) q.t = u.s; }
+    cur.master = { ...m, builtAt: Date.now() };
     await save();
     refreshUsage();
   } catch (e) {
@@ -721,7 +760,7 @@ function renderResearch() {
     <section><h3>Timeline</h3><div class="tl">${(m.timeline || []).map(e => `<div class="when">${esc(e.when || '')}</div><div>${esc(e.what || '')} ${ref(e.file, e.t)}</div>`).join('')}</div></section>
     <section><h3>Key quotes</h3><ul>${(m.key_quotes || []).map(q => `<li><strong>${esc(q.speaker || '')}:</strong> “${esc(q.quote || '')}” ${ref(q.file, q.t)}</li>`).join('')}</ul></section>
     <section><h3>Open questions</h3><ul>${(m.open_questions || []).map(q => `<li>${esc(q)}</li>`).join('')}</ul></section>
-    <section><h3>Content warnings</h3><ul>${(m.content_warnings || []).map(q => `<li>${esc(typeof q === 'string' ? q : JSON.stringify(q))}</li>`).join('') || '<li class="muted">None noted</li>'}</ul></section>`;
+    <section><h3>Content warnings</h3><ul>${(m.content_warnings || []).map(q => typeof q === 'string' ? `<li>${esc(q)}</li>` : `<li>${esc(q.note || q.description || '')} ${q.file ? ref(q.file, q.t) : ''}</li>`).join('') || '<li class="muted">None noted</li>'}</ul></section>`;
 }
 
 function downloadDoc() {
@@ -746,7 +785,7 @@ function downloadDoc() {
     <h2>Timeline</h2><ul>${(m.timeline || []).map(e => `<li>${e.when ? `<b>${txt(e.when)}</b> ` : ''}${txt(e.what)} ${at(e.file, e.t)}</li>`).join('')}</ul>
     <h2>Key quotes</h2><ul>${(m.key_quotes || []).map(q => `<li><b>${txt(q.speaker)}:</b> “${txt(q.quote)}” ${at(q.file, q.t)}</li>`).join('')}</ul>
     <h2>Open questions</h2><ul>${(m.open_questions || []).map(q => `<li>${txt(q)}</li>`).join('')}</ul>
-    <h2>Content warnings</h2><ul>${(m.content_warnings || []).map(q => `<li>${txt(typeof q === 'string' ? q : JSON.stringify(q))}</li>`).join('')}</ul>
+    <h2>Content warnings</h2><ul>${(m.content_warnings || []).map(q => typeof q === 'string' ? `<li>${txt(q)}</li>` : `<li>${txt(q.note || q.description)} ${q.file ? at(q.file, q.t) : ''}</li>`).join('')}</ul>
     <h2>File by file</h2>${files}
     </body></html>`;
   const a = document.createElement('a');
@@ -952,6 +991,18 @@ function wire() {
 
   // viewer
   $('fvClose').addEventListener('click', () => $('fileDialog').close());
+  $('fvRedo').addEventListener('click', async () => {
+    const f = vf;
+    if (!f || !f.analysis) return;
+    if (running) return alert('Wait for the analysis to finish or press Stop first.');
+    const cost = f.type === 'video' ? `about $${Math.max(0.01, (f.duration || 0) / 3600 * 0.45).toFixed(2)}` : 'less than a cent';
+    if (!confirm(`Redo the AI notes for "${f.path || f.name}"?\n\nThe transcript is kept, so only the AI part runs again: ${cost}.\nAfter this, click "Analyze all".`)) return;
+    delete f.analysis; delete f.analysisParts; delete f.analysisWindow;
+    f.status = 'new'; f.error = null;
+    await save();
+    $('fileDialog').close();
+    renderFiles();
+  });
   $('fileDialog').addEventListener('close', () => { $('fvVideo').pause(); $('fvVideo').removeAttribute('src'); $('fvVideo').load(); if (vObjUrl) { URL.revokeObjectURL(vObjUrl); vObjUrl = null; } });
   document.querySelectorAll('#fvTabs .tab').forEach(b => b.addEventListener('click', () => {
     vTab = b.dataset.tab;
