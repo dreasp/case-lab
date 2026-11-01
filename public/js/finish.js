@@ -578,8 +578,32 @@ function playNow(into) {
   if (sg.narr && into >= sg.narr.lead && into < sg.narr.lead + sg.narr.len) { $('fpNarr').play().catch(() => {}); PV.narrStarted = true; }
 }
 
+// The preview follows the sound you hear: the clock is taken from whichever recording is
+// playing, and holds while it is still loading, so captions never run ahead of the speech.
+function syncClock() {
+  const sg = PV.plan.segs[PV.i];
+  if (!sg || !PV.playing) return;
+  const A = $('fpAudio'), V = $('fpVideo'), N = $('fpNarr');
+  const now = performance.now();
+  const into = PV.base + (now - PV.wall) / 1000 - sg.t0;
+  let el = null, from = 0;
+  if (PV.audFrom != null) { el = A; from = PV.audFrom; }
+  else if (PV.vidFrom != null && !PV.freeze && !V.muted && !(PV.vidEnd != null && V.currentTime >= PV.vidEnd - 0.05)) { el = V; from = PV.vidFrom; }
+  else if (sg.narr && into >= sg.narr.lead && into < sg.narr.lead + sg.narr.len) { el = N; from = sg.narr.a0 - sg.narr.lead; }
+  if (!el) return; // photos only, or a still frame: the plain clock is fine
+  if (el.ended) return; // the recording ran out before the scene did: keep going on the plain clock
+  if (el.paused || el.readyState < 3 || el.seeking) {
+    if (el === N && !PV.narrStarted) return; // narration starts after a short pause
+    PV.wall = now; // hold the clock until the sound is really playing
+    return;
+  }
+  const t = sg.t0 + (el.currentTime - from);
+  if (isFinite(t) && t >= sg.t0 - 0.5) { PV.base = t; PV.wall = now; }
+}
+
 function tick() {
   if (!PV) return;
+  syncClock();
   const T = nowT();
   const segs = PV.plan.segs;
   const sg = segs[PV.i];
