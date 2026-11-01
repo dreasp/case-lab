@@ -304,7 +304,9 @@ function wireList() {
         openTrim(items[k], dur, async () => { await X.save(); renderStory(); });
         return;
       }
-      if (mb.dataset.media === 'del') items.splice(k, 1); else if (k > 0) [items[k - 1], items[k]] = [items[k], items[k - 1]];
+      if (mb.dataset.media === 'del') items.splice(k, 1);
+      else if (mb.dataset.media === 'left' && k > 0) [items[k - 1], items[k]] = [items[k], items[k - 1]];
+      else if (mb.dataset.media === 'right' && k < items.length - 1) [items[k + 1], items[k]] = [items[k], items[k + 1]];
       s.media = items;
       openVis.add(s.id);
       await X.save();
@@ -342,14 +344,25 @@ function wireList() {
   });
   list.addEventListener('change', async e => {
     if (e.target.closest('[data-tl]')) { await onLineEdit(e); return; }
-    if (e.target.matches('[data-media-add], [data-case-photo]')) {
+    if (e.target.matches('[data-media-add], [data-case-photo], [data-media-replace]')) {
       const c = X.cur();
       const s = story(c).segments[+e.target.closest('.seg').dataset.i];
       s.media = s.media || [];
       openVis.add(s.id);
-      if (e.target.matches('[data-media-add]')) {
+      const statusEl = e.target.closest('.np-media').querySelector('[data-status]');
+      const onStatus = t => { if (statusEl) statusEl.textContent = t; };
+      if (e.target.matches('[data-media-replace]')) {
         const files = [...e.target.files]; e.target.value = '';
-        const { items, skipped } = await addFiles(c.id, files);
+        const k = s.media.findIndex(x => x.id === e.target.dataset.mediaReplace);
+        if (!files.length || k < 0) return;
+        onStatus('Adding…');
+        const { items, skipped } = await addFiles(c.id, files, onStatus);
+        if (items[0]) s.media[k] = items[0]; // same spot in the order
+        if (skipped.length) alert(`This could not be used: ${skipped.join(', ')}`);
+      } else if (e.target.matches('[data-media-add]')) {
+        const files = [...e.target.files]; e.target.value = '';
+        onStatus('Adding…');
+        const { items, skipped } = await addFiles(c.id, files, onStatus);
         s.media.push(...items);
         if (skipped.length) alert(`These were skipped (photos: JPG, PNG, WEBP; videos: MP4, MOV): ${skipped.join(', ')}`);
       } else {

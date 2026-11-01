@@ -11,8 +11,23 @@ export function initMedia(helpers) { X = helpers; }
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
+// Can Chrome show this video? (some .mp4/.mov files use older formats it can't play)
+function playable(blob) {
+  return new Promise(resolve => {
+    const v = document.createElement('video');
+    v.muted = true; v.preload = 'auto';
+    const u = URL.createObjectURL(blob);
+    const done = ok => { clearTimeout(timer); v.removeAttribute('src'); v.load(); URL.revokeObjectURL(u); resolve(ok); };
+    const timer = setTimeout(() => done(false), 6000);
+    v.onloadeddata = () => done(v.videoWidth > 0);
+    v.onerror = () => done(false);
+    v.src = u;
+  });
+}
+
 // Saves picked files with the case; returns the new items (and names of files that can't be used)
-export async function addFiles(caseId, files) {
+// onStatus(text) shows progress while a video in an older format is converted.
+export async function addFiles(caseId, files, onStatus = () => {}) {
   const items = [], skipped = [];
   for (const file of files) {
     const isImg = IMG.test(file.name) || /^image\//.test(file.type);
@@ -25,6 +40,16 @@ export async function addFiles(caseId, files) {
     let blob;
     try { blob = new Blob([await file.arrayBuffer()], { type: file.type || (isImg ? 'image/jpeg' : 'video/mp4') }); }
     catch (e) { skipped.push(`${file.name} (could not be read: if it's in a synced folder, make it available offline first)`); continue; }
+    if (isVid && !(await playable(blob))) {
+      // convert to a standard MP4 that plays everywhere (same picture, done in your browser)
+      try {
+        onStatus(`Converting "${file.name}" to a format Chrome can play…`);
+        const { convertRange } = await import('./convert.js');
+        blob = await convertRange(new File([blob], file.name, { type: blob.type }), 0, 36000, { video: true, onProgress: p => onStatus(`Converting "${file.name}" to a format Chrome can play… ${Math.round(p * 100)}%`) });
+        if (!(await playable(blob))) throw new Error('still not playable');
+      } catch (e) { skipped.push(`${file.name} (this video's format can't be played or converted; try exporting it again as an H.264 MP4)`); continue; }
+      finally { onStatus(''); }
+    }
     try { await X.putFileSafe(key, blob); }
     catch (e) { skipped.push(`${file.name} (could not be saved: ${e.message})`); continue; }
     session.set(id, blob);
@@ -107,13 +132,19 @@ export function stripHtml(items, scope, casePhotos, hint, dur) {
   return `<div class="np-media" data-scope="${scope}">
     ${dur ? `<div class="np-length small-text">${esc(lengthNote(items, dur))}</div>` : ''}
     ${items.map((it, k) => `<div class="np-thumb" title="${esc(it.name)}">
-      <div class="np-thumb-pic" data-thumb="${it.id}" data-slot="${sl[k] ? sl[k].d : 0}"></div>
+      <div class="np-thumb-pic" data-thumb="${it.id}" data-slot="${sl[k] ? sl[k].d : 0}"></div><span class="np-num">${k + 1}</span>
       <div class="np-thumb-cap small-text" data-cap="${it.id}">${sl[k] ? `${sl[k].d.toFixed(1)} s on screen` : (dur ? 'Not shown: the scene is too short' : '')}${it.kind === 'video' && it.len ? ` · uses ${t1(it.from)} to ${t1((it.from || 0) + it.len)}` : ''}${it.kind === 'video' && it.muted ? ' · muted' : ''}</div>
-      <div class="np-thumb-btns">${it.kind === 'video' ? `<button class="btn ghost" type="button" data-media="trim" data-item="${it.id}" title="Choose which part to use and mute the sound">Trim / sound</button>` : ''}${k ? `<button class="btn ghost" type="button" data-media="left" data-item="${it.id}" title="Show earlier">←</button>` : ''}<button class="btn ghost" type="button" data-media="del" data-item="${it.id}" title="Remove">✕</button></div>
+      <div class="np-thumb-btns">
+        ${k ? `<button class="btn ghost" type="button" data-media="left" data-item="${it.id}" title="Show earlier">←</button>` : ''}${k < items.length - 1 ? `<button class="btn ghost" type="button" data-media="right" data-item="${it.id}" title="Show later">→</button>` : ''}
+        <label class="btn ghost" title="Swap in a different photo or video, keeping this spot">Replace<input type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,.mp4,.mov,.m4v" data-media-replace="${it.id}" hidden></label>
+        ${it.kind === 'video' ? `<button class="btn ghost" type="button" data-media="trim" data-item="${it.id}" title="Choose which part to use and mute the sound">Trim / sound</button>` : ''}
+        <button class="btn ghost" type="button" data-media="del" data-item="${it.id}" title="Remove">✕</button>
+      </div>
     </div>`).join('')}
     <div class="np-media-add">
       <label class="btn small">+ Add photos or videos<input type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,.mp4,.mov,.m4v" data-media-add hidden></label>
       ${casePhotos.length ? `<select data-case-photo><option value="">+ Add a photo from this case…</option>${casePhotos.map(f => `<option value="${f.id}">${esc(f.path || f.name)}</option>`).join('')}</select>` : ''}
+      <span class="muted small-text np-status" data-status></span>
       <span class="muted small-text">${hint || ''}</span>
     </div>
   </div>`;

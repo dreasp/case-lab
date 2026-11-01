@@ -424,3 +424,11 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .trim-mute input { width: 18px; height: 18px; accent-color: var(--gold); }
 .np-thumb-btns { flex-wrap: wrap; }
 .np-missing { font-size: 10px; line-height: 1.25; padding: 4px; text-align: center; color: var(--accent); }
+.np-thumb { position: relative; }
+.np-num { position: absolute; top: 4px; left: 4px; background: rgba(0,0,0,.72); color: #fff; font: 600 11px/1 Arial, sans-serif; padding: 3px 6px; border-radius: 4px; pointer-events: none; }
+.np-thumb-btns label.btn { padding: 1px 7px; font-size: 11px; cursor: pointer; }
+.np-media .np-thumb { width: 150px; }
+.np-media .np-thumb-pic { width: 150px; height: 84px; }
+.np-status { color: var(--gold); }
+.np-media { align-items: flex-start; }
+.np-media-add { align-self: flex-end; }
