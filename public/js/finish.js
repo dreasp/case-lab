@@ -360,6 +360,17 @@ async function checkSwears() {
     <span class="muted small-text">If one is missed, it was probably transcribed as a different word: fix it with "Edit lines" on the Story tab and it will be caught. To silence other words too, add them to your list.</span></div>`;
 }
 
+// Originals the app couldn't find: one "Find it" button each (picking a file needs a click)
+function showMissing(list) {
+  $('finResult').innerHTML = `<div class="story-note"><strong>The app can't find ${list.length === 1 ? 'this original' : 'these originals'} on your computer:</strong>
+    <ul class="missing-list">${list.map(f => `<li><span>${X.esc(label(f))}</span> <button class="btn small" type="button" data-find="${f.id}">Find it</button></li>`).join('')}</ul>
+    <span class="muted small-text">This happens when a file was added with "Add files" in an earlier session, was moved, or is on a drive that isn't plugged in. Plug in the drive if needed, click "Find it" and pick the same file: the app remembers it from then on. Then click "Export video" again.</span></div>`;
+  $('finResult').querySelectorAll('[data-find]').forEach(b => b.addEventListener('click', async () => {
+    const f = X.fileById(b.dataset.find);
+    if (f && await X.linkOriginal(f)) { b.replaceWith(Object.assign(document.createElement('span'), { className: 'np-ok small-text', textContent: 'Found' })); }
+  }));
+}
+
 // ---------- export ----------
 let worker = null;
 
@@ -374,6 +385,16 @@ async function exportVideo() {
     if (await X.requestAccess()) alert('Thanks. Click "Export video" again to start.');
     else alert('Case Lab needs your OK to read the footage folder to build the video.');
     return;
+  }
+  // videos need their originals: find out now, before asking where to save
+  {
+    const plan0 = buildPlan(c, m);
+    const missing = [];
+    for (const fid of plan0.files) {
+      const f = X.fileById(fid);
+      if (f && f.type === 'video' && !(await X.getLocalFile(f).catch(() => null))) missing.push(f);
+    }
+    if (missing.length) { showMissing(missing); return; }
   }
   let fileHandle = null;
   if (window.showSaveFilePicker) {
@@ -403,10 +424,25 @@ async function exportVideo() {
       for (const s of sg.sound) need(s.file, s.from, s.from + sg.dur);
     }
     const toConvert = [];
+    // find every original first, so all missing files can be shown at once
+    const found = new Map(), missing = [];
+    let usedCloud = [];
+    for (const fid of used.keys()) {
+      const f = X.fileById(fid);
+      let file = await X.getLocalFile(f).catch(() => null);
+      if (!file && f.type === 'audio' && f.audioKey) {
+        // a recording (911 call, phone call): the copy saved in the cloud during analysis is fine
+        progress(0, `Downloading the saved copy of "${label(f)}"…`);
+        const [u] = await X.signedUrls([f.audioKey]);
+        const r = u ? await fetch(u).catch(() => null) : null;
+        if (r && r.ok) { file = new File([await r.blob()], f.name.replace(/\.[^.]+$/, '') + '.m4a', { type: 'audio/mp4' }); usedCloud.push(label(f)); }
+      }
+      if (file) found.set(fid, file); else missing.push(f);
+    }
+    if (missing.length) { showMissing(missing); throw new Error('MISSING'); }
     for (const [fid, ranges] of used) {
       const f = X.fileById(fid);
-      const file = await X.getLocalFile(f).catch(() => null);
-      if (!file) throw new Error(`"${label(f)}" is not available on this computer. Open the case on the computer with the footage folder.`);
+      const file = found.get(fid);
       if (NATIVE.test(f.name) && f.type === 'video') {
         sources[fid] = { blob: file, name: label(f) };
         locate.set(fid, t => ({ sid: fid, from: t }));
@@ -501,9 +537,9 @@ async function exportVideo() {
       worker.postMessage({ type: 'start', job }, [pcm.buffer]);
     });
     progress(1, 'Done');
-    $('finResult').innerHTML = `<div class="story-note"><strong>Your video is saved</strong> as "${X.esc(fileHandle.name)}" (${X.fmtH(res.duration)} long, built in ${X.fmtH(res.seconds)}).${res.problems.length ? `<br><br><strong>Some parts had problems:</strong><ul>${res.problems.map(p => `<li>${X.esc(p)}</li>`).join('')}</ul>` : ''}</div>`;
+    $('finResult').innerHTML = `<div class="story-note"><strong>Your video is saved</strong> as "${X.esc(fileHandle.name)}" (${X.fmtH(res.duration)} long, built in ${X.fmtH(res.seconds)}).${usedCloud.length ? `<br><span class="muted small-text">The original of ${usedCloud.map(x => `"${X.esc(x)}"`).join(', ')} wasn't on this computer, so the copy saved in the cloud was used (same sound).</span>` : ''}${res.problems.length ? `<br><br><strong>Some parts had problems:</strong><ul>${res.problems.map(p => `<li>${X.esc(p)}</li>`).join('')}</ul>` : ''}</div>`;
   } catch (e) {
-    $('finResult').innerHTML = `<div class="story-note"><strong>${/cancel/i.test(e.message) ? 'Export cancelled' : 'The export stopped'}</strong>${/cancel/i.test(e.message) ? '' : ': ' + X.esc(e.message)}</div>`;
+    if (e.message !== 'MISSING') $('finResult').innerHTML = `<div class="story-note"><strong>${/cancel/i.test(e.message) ? 'Export cancelled' : 'The export stopped'}</strong>${/cancel/i.test(e.message) ? '' : ': ' + X.esc(e.message)}</div>`;
   } finally {
     if (worker) { worker.terminate(); worker = null; }
     $('finCancel').classList.add('hidden');

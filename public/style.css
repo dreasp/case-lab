@@ -438,3 +438,4 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 #finMuteHow { background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 13px; }
 .mute-found { max-height: 220px; overflow: auto; margin: 8px 0; }
 #finMuteReport { margin-bottom: 10px; }
+.missing-list { margin: 8px 0; display: grid; gap: 6px; } .missing-list li { display: flex; gap: 10px; align-items: center; }

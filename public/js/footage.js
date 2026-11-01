@@ -155,6 +155,23 @@ async function requestAccess() {
   return st === 'granted';
 }
 
+// Link an original that the app can't find (added with "Add files" in an earlier session, moved,
+// or on a drive that was unplugged): you pick it once, and it's remembered from then on.
+async function linkOriginal(f) {
+  if (!window.showOpenFilePicker) { alert('Your browser can\'t do this. Please use an up-to-date Chrome.'); return false; }
+  let h;
+  try { [h] = await window.showOpenFilePicker({ id: 'caselab-footage', multiple: false }); } catch (e) { return false; }
+  const file = await h.getFile();
+  if (file.name !== f.name && !confirm(`You picked "${file.name}", but the case file is "${f.name}". Use it anyway?`)) return false;
+  if (f.size && file.size !== f.size && !confirm(`"${file.name}" is a different size than the file that was analyzed. If it's an edited version, the timing may not match. Use it anyway?`)) return false;
+  const key = `${cur.id}:h:${f.id}`;
+  await putHandle(key, h);
+  f.handleKey = key;
+  sessionFiles.set(f.id, file);
+  await save();
+  return true;
+}
+
 async function getLocalFile(f) {
   if (sessionFiles.has(f.id)) return sessionFiles.get(f.id);
   if (f.handleKey) {
@@ -1009,7 +1026,7 @@ function renderViewerList() {
 function wire() {
   initWords({ api, putFile: (k, b) => store.putFile(k, b), getFile: k => store.getFile(k) });
   initMedia({ esc, fileById, getLocalFile, signedUrls, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
-  initFinish({ cur: () => cur, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, speakerMap, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
+  initFinish({ cur: () => cur, save, api, esc, fmtH, fileById, getLocalFile, linkOriginal, signedUrls, speakerMap, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
   initStory({ cur: () => cur, contextText, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, openViewer, speakerMap, refreshUsage, NATIVE_VIDEO });
   $('newCase').addEventListener('click', () => { if (running) return alert('Wait for the analysis to finish or press Stop first.'); showNew(); $('caseTitleInput').focus(); });
   $('caseCreate').addEventListener('click', async () => {
