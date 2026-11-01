@@ -5,6 +5,7 @@
 import { api, refreshUsage, fmt, esc } from './app.js';
 import { cloudStore as store } from './cloud.js';
 import { store as localStore } from './store.js';
+import { caseChecks } from './checks.js';
 
 const $ = id => document.getElementById(id);
 const VIDEO_EXT = /\.(mp4|mov|m4v|wmv|avi|mpe?g|mkv|flv|3gp|webm|asf|vob|ts|mts|m2ts)$/i;
@@ -327,7 +328,8 @@ async function renderFiles() {
     const lv = live.get(f.id);
     const st = `<div class="st ${f.status === 'done' ? 'done' : f.status === 'error' ? 'error' : busy ? 'busy' : ''}">${esc(STATUS[f.status] || f.status)}${f.status === 'error' && f.error ? ': ' + esc(f.error) : ''}</div>` +
       (busy && lv ? `<div class="mini-bar"><div style="width:${Math.round((lv.frac || 0) * 100)}%"></div></div>` : '') +
-      (f.audioNote && f.type === 'video' ? `<div class="fsub">${esc(f.audioNote)}</div>` : '');
+      (f.audioNote && f.type === 'video' ? `<div class="fsub">${esc(f.audioNote)}</div>` : '') +
+      (f.skipResearch ? '<div class="fsub">Left out of the research (second camera angle)</div>' : '');
     const desc = f.type === 'photo' ? (f.photo && f.photo.description) : (f.analysis && ((f.type === 'document' && f.analysis.doc_type ? f.analysis.doc_type + ': ' : '') + (f.analysis.summary || '')));
     return `<tr class="${f.status === 'done' ? 'clickable' : ''}" data-id="${f.id}">
       <td>${icon}</td>
@@ -339,6 +341,54 @@ async function renderFiles() {
     </tr>`;
   }).join('') || '<tr><td colspan="6" class="muted">No files yet. Choose the case folder or drop files here.</td></tr>';
   renderMeta();
+  renderChecks();
+}
+
+// ---------- checks (no AI: spots duplicates, file-name dates, one person in two places) ----------
+function renderChecks() {
+  const list = running ? [] : caseChecks(cur);
+  const open = list.filter(c => !c.done);
+  const html = list.length ? `<div class="checks-head"><strong>${open.length ? `${open.length} thing${open.length > 1 ? 's' : ''} to check` : 'Checks'}</strong><span class="muted small-text">Found by comparing the files, no AI used. Fix these before building the research.</span></div>` +
+    list.map(c => `<div class="check ${c.done ? 'ok' : ''}" data-key="${esc(c.key)}">
+      <div class="check-title">${esc(c.title)}</div>
+      <div class="check-text">${esc(c.done || c.text)}</div>
+      <div class="check-btns">${(c.refs || []).map(r => ref(r.file, r.t)).join(' ')}
+        ${c.action ? `<button class="btn small" type="button" data-check="act">${esc(c.action.label)}</button>` : ''}
+        ${c.undo ? `<button class="btn small ghost" type="button" data-check="undo">${esc(c.undo.label)}</button>` : ''}
+        ${c.done ? '' : '<button class="btn small ghost" type="button" data-check="ignore">Ignore</button>'}</div>
+    </div>`).join('') : '';
+  for (const id of ['caseChecks', 'researchChecks']) {
+    $(id).innerHTML = html;
+    $(id).classList.toggle('hidden', !list.length);
+  }
+}
+
+async function onCheckClick(e) {
+  const r = e.target.closest('.ref');
+  if (r) { const f = fileById(r.dataset.file); if (f) openViewer(f, Number(r.dataset.t) || 0); return; }
+  const b = e.target.closest('[data-check]');
+  if (!b) return;
+  const key = b.closest('.check').dataset.key;
+  const c = caseChecks(cur).find(x => x.key === key);
+  if (!c) return;
+  const step = b.dataset.check === 'act' ? c.action : b.dataset.check === 'undo' ? c.undo : { type: 'ignore' };
+  if (step.type === 'skip' || step.type === 'include') {
+    const f = fileById(step.file);
+    if (f) f.skipResearch = step.type === 'skip';
+  } else if (step.type === 'ignore') {
+    cur.checksIgnored = [...new Set([...(cur.checksIgnored || []), key])];
+  } else if (step.type === 'context') {
+    cur.context = ((cur.context || '').trimEnd() + '\n' + step.line).trim();
+    $('caseContext').value = cur.context;
+    document.querySelector('#caseTabs .tab[data-tab="context"]').click();
+    const ta = $('caseContext');
+    ta.focus();
+    const i = ta.value.lastIndexOf(step.line);
+    const blank = step.line.search(/\(date\)|\(time\)|______/);
+    if (i >= 0) ta.setSelectionRange(i + Math.max(0, blank), i + Math.max(0, blank) + (blank >= 0 ? (step.line.match(/\(date\)|\(time\)|______/)[0].length) : step.line.length));
+  }
+  await save();
+  renderFiles();
 }
 
 let renderTimer = null;
@@ -714,7 +764,7 @@ function stop() {
 
 // ---------- research ----------
 async function buildMaster() {
-  const files = cur.files.filter(f => f.analysis);
+  const files = cur.files.filter(f => f.analysis && !f.skipResearch);
   if (!files.length) return alert('Analyze the files first (Files tab).');
   $('buildMaster').disabled = true;
   $('researchBody').innerHTML = '<p class="muted">Putting the case together…</p>';
@@ -768,7 +818,7 @@ function downloadDoc() {
   if (!m) return;
   const txt = s => esc(s || '');
   const at = (id, t) => `<i>(${txt(fileLabel(id))} at ${fmtH(t || 0)})</i>`;
-  const files = cur.files.filter(f => f.analysis).map(f => f.type === 'document' ? `<h3>${txt(f.path || f.name)}</h3>
+  const files = cur.files.filter(f => f.analysis && !f.skipResearch).map(f => f.type === 'document' ? `<h3>${txt(f.path || f.name)}</h3>
     <p><b>${txt(f.analysis.doc_type)}</b>${f.analysis.date ? ` · ${txt(f.analysis.date)}` : ''}</p>
     <p>${txt(f.analysis.summary)}</p>
     <ul>${(f.analysis.key_facts || []).map(x => `<li>${txt(x)}</li>`).join('')}</ul>` : `<h3>${txt(f.path || f.name)}</h3>
@@ -959,6 +1009,8 @@ function wire() {
   $('caseCancel').addEventListener('click', stop);
   $('buildMaster').addEventListener('click', buildMaster);
   $('downloadDoc').addEventListener('click', downloadDoc);
+  $('caseChecks').addEventListener('click', onCheckClick);
+  $('researchChecks').addEventListener('click', onCheckClick);
   $('researchBody').addEventListener('click', e => {
     const r = e.target.closest('.ref');
     if (!r) return;

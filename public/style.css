@@ -293,3 +293,10 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
   .project-head { flex-direction: column; }
 }
 .row-btns { display: flex; gap: 8px; align-items: flex-start; }
+.checks { display: grid; gap: 10px; margin: 12px 0; padding: 14px 16px; border: 1px solid var(--gold); border-radius: 12px; background: var(--panel); }
+.checks-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.check { border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 6px; }
+.check-title { font-weight: 600; }
+.check.ok .check-title { color: var(--muted); }
+.check-text { font-size: 13px; line-height: 1.45; }
+.check-btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
