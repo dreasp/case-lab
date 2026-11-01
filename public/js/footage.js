@@ -8,6 +8,7 @@ import { store as localStore } from './store.js';
 import { caseChecks } from './checks.js';
 import { initStory, renderStory } from './story.js';
 import { initFinish, renderFinish } from './finish.js';
+import { initMedia } from './media.js';
 
 const $ = id => document.getElementById(id);
 const VIDEO_EXT = /\.(mp4|mov|m4v|wmv|avi|mpe?g|mkv|flv|3gp|webm|asf|vob|ts|mts|m2ts)$/i;
@@ -964,7 +965,7 @@ async function openViewer(f, t = 0) {
   const a = f.analysis;
   $('fvSummary').innerHTML = f.type === 'photo'
     ? (f.photo ? `<p>${esc(f.photo.description)}</p>${f.photo.text ? `<p class="muted">Text: ${esc(f.photo.text)}</p>` : ''}${f.photo.sensitive ? '<p class="sens">Marked sensitive</p>' : ''}` : '')
-    : (a ? `<p>${esc(a.summary)}</p>${(a.uncertain || []).length ? `<p class="muted small-text"><strong>Check:</strong> ${esc(a.uncertain.join(' · '))}</p>` : ''}` : '');
+    : (a ? `<p>${esc(a.summary)}</p>${(a.uncertain || []).length ? `<p class="muted small-text"><strong>Check:</strong> ${esc(a.uncertain.map(x => typeof x === 'string' ? x : (x && (x.note || x.text || x.what || x.issue || x.description)) || JSON.stringify(x)).join(' · '))}</p>` : ''}` : '');
   $('fvTabs').classList.toggle('hidden', f.type === 'photo' || f.type === 'document');
   vTab = f.transcript ? 'transcript' : 'moments';
   document.querySelectorAll('#fvTabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === vTab));
@@ -1005,7 +1006,8 @@ function renderViewerList() {
 
 // ---------- wiring ----------
 function wire() {
-  initFinish({ cur: () => cur, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), getFile: k => store.getFile(k) });
+  initMedia({ esc, fileById, getLocalFile, signedUrls, putFile: (k, b) => store.putFile(k, b), getFile: k => store.getFile(k) });
+  initFinish({ cur: () => cur, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, speakerMap, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), getFile: k => store.getFile(k) });
   initStory({ cur: () => cur, contextText, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, openViewer, speakerMap, refreshUsage, NATIVE_VIDEO });
   $('newCase').addEventListener('click', () => { if (running) return alert('Wait for the analysis to finish or press Stop first.'); showNew(); $('caseTitleInput').focus(); });
   $('caseCreate').addEventListener('click', async () => {

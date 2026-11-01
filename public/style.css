@@ -397,3 +397,6 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .fp-bar i { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--bg); pointer-events: none; }
 .fp-time { display: flex; justify-content: space-between; color: var(--muted); margin-top: 4px; }
 #fpCard { white-space: pre-line; }
+.seg-vis { margin-top: 8px; font-size: 13px; }
+.seg-vis summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.seg-vis[open] summary { margin-bottom: 4px; }

@@ -92,6 +92,8 @@
     x.font = bold ? `900 ${size}px "Arial Black", Arial, Helvetica, sans-serif` : `600 ${size}px Arial, Helvetica, sans-serif`;
     x.textBaseline = 'middle';
     const words = cue.words.map(w => ({ text: style.caps ? w.w.toUpperCase() : w.w, s: w.s, e: w.e }));
+    // Footage lines start with who is speaking, and each speaker has their own color
+    if (cue.who) words.unshift({ text: (style.caps ? cue.who.toUpperCase() : cue.who) + ':', s: cue.s - 1, e: cue.s - 1 });
     const space = x.measureText(' ').width;
     const lines = layoutLines(x, words, W * (bold ? 0.86 : 0.84), space);
     const lineH = size * (bold ? 1.15 : 1.3);
@@ -120,7 +122,7 @@
           x.strokeStyle = 'rgba(0,0,0,0.95)';
           x.strokeText(w.text, lx, y);
         }
-        x.fillStyle = isActive ? style.highlight : '#ffffff';
+        x.fillStyle = isActive ? style.highlight : (cue.color || '#ffffff');
         x.fillText(w.text, lx, y);
         lx += w.width + space;
         wi++;

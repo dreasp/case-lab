@@ -1,6 +1,8 @@
 // Story builder (footage step 2): AI rough cut in story order with narration drafts,
 // edited as a simple list (drag, trim, add, delete), previewed in order, script exported.
 
+import { addFiles, casePhotoItem, stripHtml, fillThumbs, migrate } from './media.js';
+
 let X = null;               // helpers from footage.js
 const $ = id => document.getElementById(id);
 const WPS = 2.6;            // narration read speed, words per second (about 156 a minute)
@@ -113,9 +115,22 @@ export function renderStory() {
   if ((st.notes || []).length) info.push(`<div class="story-note"><strong>Check before recording</strong><ul>${st.notes.map(t => `<li>${X.esc(t)}</li>`).join('')}</ul></div>`);
   $('storyInfo').innerHTML = info.join('');
   let n = 0, k = 0;
+  if (migrate(c)) X.save();
   $('storyList').innerHTML = st.segments.map((s, i) => s.type === 'clip' ? clipCard(s, i, ++k) : narrCard(s, i, ++n)).join('');
+  fillThumbs($('storyList'), st.segments.flatMap(s => s.media || []));
   renderTotals();
   fillAddClip(c);
+}
+
+const openVis = new Set(); // scenes whose photo/video section is open
+function visuals(s, hint) {
+  const c = X.cur();
+  const items = s.media || [];
+  const photos = c.files.filter(f => f.type === 'photo');
+  return `<details class="seg-vis" data-vis="${s.id}" ${items.length || openVis.has(s.id) ? 'open' : ''}>
+    <summary>Photos or videos on screen${items.length ? ` (${items.length})` : ''}</summary>
+    ${stripHtml(items, s.id, photos, hint)}
+  </details>`;
 }
 
 function narrCard(s, i, n) {
@@ -124,6 +139,7 @@ function narrCard(s, i, n) {
     <div>
       <div class="seg-num">Narration ${n} · <span class="mono" data-est>${X.fmtH(narrSecs(s.text))}</span></div>
       <textarea rows="${Math.min(8, Math.max(2, Math.ceil((s.text || '').length / 110)))}" data-field="text" placeholder="Write what you will say here">${X.esc(s.text || '')}</textarea>
+      ${visuals(s, 'Shown one after another while you speak; photos slowly zoom. Without any, the footage leading up to the next clip is shown.')}
     </div>
     <div class="seg-side">
       <button class="btn ghost" data-act="play" type="button" title="Preview from here">▶</button>
@@ -156,6 +172,7 @@ function clipCard(s, i, k) {
         <input data-field="end" value="${X.fmtH(s.end)}"><button class="btn ghost" data-act="nudge" data-edge="end" data-d="1" type="button">+1s</button><button class="btn ghost" data-act="nudge" data-edge="end" data-d="5" type="button">+5s</button>
       </div>
       <div class="seg-lines">${clipLines(f, s)}</div>
+      ${visuals(s, f && f.type === 'audio' ? 'Shown one after another while the recording plays; photos slowly zoom. Without any, a title card is shown.' : 'These replace the footage picture during this clip (its sound stays), one after another.')}
     </div>
     <div class="seg-side">
       <button class="btn ghost" data-act="play" type="button" title="Preview from here">▶</button>
@@ -202,7 +219,24 @@ const saveSoon = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => X
 
 function wireList() {
   const list = $('storyList');
+  list.addEventListener('toggle', e => {
+    const d = e.target.closest && e.target.closest('[data-vis]');
+    if (d) { if (d.open) openVis.add(d.dataset.vis); else openVis.delete(d.dataset.vis); }
+  }, true);
   list.addEventListener('click', async e => {
+    const mb = e.target.closest('[data-media]');
+    if (mb) {
+      const s = story(X.cur()).segments[+mb.closest('.seg').dataset.i];
+      const items = s.media || [];
+      const k = items.findIndex(x => x.id === mb.dataset.item);
+      if (k < 0) return;
+      if (mb.dataset.media === 'del') items.splice(k, 1); else if (k > 0) [items[k - 1], items[k]] = [items[k], items[k - 1]];
+      s.media = items;
+      openVis.add(s.id);
+      await X.save();
+      renderStory();
+      return;
+    }
     const b = e.target.closest('[data-act]');
     if (!b) return;
     const segs = story(X.cur()).segments;
@@ -232,6 +266,24 @@ function wireList() {
     saveSoon();
   });
   list.addEventListener('change', async e => {
+    if (e.target.matches('[data-media-add], [data-case-photo]')) {
+      const c = X.cur();
+      const s = story(c).segments[+e.target.closest('.seg').dataset.i];
+      s.media = s.media || [];
+      openVis.add(s.id);
+      if (e.target.matches('[data-media-add]')) {
+        const files = [...e.target.files]; e.target.value = '';
+        const { items, skipped } = await addFiles(c.id, files);
+        s.media.push(...items);
+        if (skipped.length) alert(`These were skipped (photos: JPG, PNG, WEBP; videos: MP4, MOV): ${skipped.join(', ')}`);
+      } else {
+        const f = X.fileById(e.target.value); e.target.value = '';
+        if (f) s.media.push(casePhotoItem(f));
+      }
+      await X.save();
+      renderStory();
+      return;
+    }
     const fld = e.target.dataset.field;
     if (fld !== 'start' && fld !== 'end') return;
     const s = story(X.cur()).segments[+e.target.closest('.seg').dataset.i];

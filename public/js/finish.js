@@ -2,6 +2,7 @@
 // then the whole story is built at full quality from your original footage.
 
 import { alignWords, buildCues, DEFAULT_STYLE } from './captions.js';
+import { mediaUrl, mediaBlob, migrate } from './media.js';
 
 let X = null;
 const $ = id => document.getElementById(id);
@@ -10,7 +11,7 @@ const LEAD = 0.15, TAIL = 0.4;      // short pauses around each narration part
 const NATIVE = /\.(mp4|mov|m4v)$/i;
 const label = f => f ? (f.path || f.name) : 'missing file';
 const fmt1 = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = t - m * 60; return `${m}:${s.toFixed(1).padStart(4, '0')}`; };
-const UNDER = { next: 'Lead-up to the next clip', prev: 'What comes after the last clip', still: 'Still frame of the next clip', own: 'My photos or videos', black: 'Black screen' };
+const UNDER = { next: 'Lead-up to the next clip', prev: 'What comes after the last clip', still: 'Still frame of the next clip', black: 'Black screen' };
 const IMG = /\.(jpe?g|png|webp|gif)$/i;
 
 export function initFinish(helpers) {
@@ -21,17 +22,6 @@ export function initFinish(helpers) {
     const d = e.target.dataset;
     if (d.under) {
       const n = narr(); n.under = n.under || {}; n.under[d.under] = e.target.value;
-      await X.save();
-      renderFinish();
-    } else if (d.mediaAdd) {
-      const files = [...e.target.files]; e.target.value = '';
-      await addMedia(d.mediaAdd, files);
-    } else if (d.casePhoto) {
-      const fid = e.target.value; e.target.value = '';
-      const f = fid && X.fileById(fid);
-      if (!f) return;
-      const n = narr(); n.media = n.media || {};
-      (n.media[d.casePhoto] = n.media[d.casePhoto] || []).push({ id: Math.random().toString(36).slice(2, 10), kind: 'photo', name: label(f), caseFile: f.id });
       await X.save();
       renderFinish();
     }
@@ -131,16 +121,6 @@ async function narrSrc() {
 async function onPartClick(e) {
   const b = e.target.closest('[data-act]');
   if (!b) return;
-  if (b.dataset.act === 'media-del' || b.dataset.act === 'media-left') {
-    const n = narr();
-    const list = (n.media || {})[b.dataset.part] || [];
-    const i = list.findIndex(x => x.id === b.dataset.item);
-    if (i < 0) return;
-    if (b.dataset.act === 'media-del') list.splice(i, 1); else if (i > 0) [list[i - 1], list[i]] = [list[i], list[i - 1]];
-    await X.save();
-    renderFinish();
-    return;
-  }
   const c = X.cur();
   const id = b.closest('[data-id]').dataset.id;
   const m = (matchParts(c) || []).find(x => x.id === id);
@@ -163,6 +143,7 @@ async function onPartClick(e) {
 export function renderFinish() {
   const c = X.cur();
   if (!c) return;
+  if (migrate(c)) X.save();
   const n = c.narr || {};
   const o = n.opts || {};
   $('finAspect').value = o.aspect || '16:9';
@@ -189,90 +170,15 @@ export function renderFinish() {
         <span class="np-adj small-text">Start <button class="btn ghost" data-act="start" data-d="-0.25" type="button">−</button><button class="btn ghost" data-act="start" data-d="0.25" type="button">+</button>
         End <button class="btn ghost" data-act="end" data-d="-0.25" type="button">−</button><button class="btn ghost" data-act="end" data-d="0.25" type="button">+</button></span>
         ${x.ok ? '<span class="np-ok small-text">Matched</span>' : '<span class="np-bad small-text">Check this one: the timing looks off</span>'}` : ''}
-        <label class="small-text muted np-under">Under it <select data-under="${p.id}">${Object.entries(UNDER).map(([k, v]) => `<option value="${k}" ${(under[p.id] || 'next') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+        ${(p.media || []).length ? `<span class="small-text muted np-under">On screen: your ${p.media.length} photo${p.media.length > 1 ? 's/videos' : ' or video'} (set on the Story tab)</span>` : `<label class="small-text muted np-under">Under it <select data-under="${p.id}">${Object.entries(UNDER).map(([k, v]) => `<option value="${k}" ${(under[p.id] || 'next') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`}
       </div>
       <div class="np-text">${X.esc(p.text.slice(0, 220))}${p.text.length > 220 ? '…' : ''}</div>
-      ${(under[p.id] || 'next') === 'own' ? mediaStrip(c, p.id) : ''}
     </li>`;
   }).join('');
-  fillThumbs();
   const plan = m ? buildPlan(c, m) : null;
   $('finSummary').textContent = plan ? `The video will be about ${X.fmtH(plan.total)} long: ${plan.clips} clips from ${plan.files.size} file${plan.files.size === 1 ? '' : 's'} and ${parts.length} narration parts.${plan.convert.size ? ` ${plan.convert.size} file${plan.convert.size === 1 ? '' : 's'} (like WMV) will have the needed parts converted first.` : ''}` : 'Upload your narration to continue.';
   $('finExport').disabled = !plan || !!worker;
   $('finPreview').disabled = !plan;
-}
-
-// ---------- your own photos and videos under a narration part ----------
-const casePhotos = c => c.files.filter(f => f.type === 'photo');
-function mediaStrip(c, pid) {
-  const items = ((c.narr && c.narr.media) || {})[pid] || [];
-  const photos = casePhotos(c);
-  return `<div class="np-media">
-    ${items.map((it, k) => `<div class="np-thumb" title="${X.esc(it.name)}">
-      <div class="np-thumb-pic" data-thumb="${it.id}"></div>
-      <div class="np-thumb-btns">${k ? `<button class="btn ghost" type="button" data-act="media-left" data-part="${pid}" data-item="${it.id}" title="Show earlier">←</button>` : ''}<button class="btn ghost" type="button" data-act="media-del" data-part="${pid}" data-item="${it.id}" title="Remove">✕</button></div>
-    </div>`).join('')}
-    <div class="np-media-add">
-      <label class="btn small">+ Add photos or videos<input type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,.mp4,.mov,.m4v" data-media-add="${pid}" hidden></label>
-      ${photos.length ? `<select data-case-photo="${pid}"><option value="">+ Add a photo from this case…</option>${photos.map(f => `<option value="${f.id}">${X.esc(label(f))}</option>`).join('')}</select>` : ''}
-      <span class="muted small-text">${items.length ? `${items.length} item${items.length > 1 ? 's' : ''}, shown one after another while you speak (photos slowly zoom).` : 'Nothing added yet: the lead-up to the next clip is used until you add something.'}</span>
-    </div>
-  </div>`;
-}
-
-const urlCache = new Map();
-async function mediaUrl(it) {
-  if (urlCache.has(it.id)) return urlCache.get(it.id);
-  let blob = null;
-  if (it.key) blob = await X.getFile(it.key);
-  else if (it.caseFile) {
-    const f = X.fileById(it.caseFile);
-    blob = f ? await X.getLocalFile(f).catch(() => null) : null;
-    if (!blob && f && f.copyKey) { const [u] = await X.signedUrls([f.copyKey]); if (u) { urlCache.set(it.id, u); return u; } }
-  }
-  if (!blob) return null;
-  const u = URL.createObjectURL(blob);
-  urlCache.set(it.id, u);
-  return u;
-}
-async function mediaBlob(it) {
-  if (it.key) return X.getFile(it.key);
-  const f = X.fileById(it.caseFile);
-  if (!f) return null;
-  const local = await X.getLocalFile(f).catch(() => null);
-  if (local) return local;
-  if (f.copyKey) { const [u] = await X.signedUrls([f.copyKey]); if (u) { const r = await fetch(u); if (r.ok) return r.blob(); } }
-  return null;
-}
-async function fillThumbs() {
-  const c = X.cur();
-  const all = Object.values((c.narr && c.narr.media) || {}).flat();
-  for (const el of document.querySelectorAll('[data-thumb]')) {
-    const it = all.find(x => x.id === el.dataset.thumb);
-    if (!it) continue;
-    const u = await mediaUrl(it).catch(() => null);
-    if (!u) { el.textContent = 'missing'; continue; }
-    el.innerHTML = it.kind === 'video' ? `<video src="${u}#t=0.5" muted preload="metadata"></video><span class="np-vid">▶</span>` : `<img src="${u}" alt="">`;
-  }
-}
-
-async function addMedia(pid, files) {
-  const c = X.cur();
-  const n = narr(); n.media = n.media || {};
-  const list = (n.media[pid] = n.media[pid] || []);
-  const skipped = [];
-  for (const file of files) {
-    const isImg = IMG.test(file.name) || /^image\//.test(file.type);
-    const isVid = /\.(mp4|mov|m4v)$/i.test(file.name);
-    if (!isImg && !isVid) { skipped.push(file.name); continue; }
-    const id = Math.random().toString(36).slice(2, 10);
-    const key = `${c.id}:m:${id}`;
-    await X.putFile(key, file);
-    list.push({ id, kind: isImg ? 'photo' : 'video', name: file.name, key });
-  }
-  await X.save();
-  renderFinish();
-  if (skipped.length) alert(`These were skipped (photos: JPG, PNG, WEBP; videos: MP4, MOV): ${skipped.join(', ')}`);
 }
 
 // ---------- the plan: every segment on the final timeline ----------
@@ -292,7 +198,8 @@ function buildPlan(c, matched) {
       if (!f) continue;
       const dur = Math.max(0.5, s.end - s.start);
       files.add(f.id); if (!NATIVE.test(f.name) || f.type === 'audio') convert.add(f.id);
-      out.push({ kind: 'clip', t0: t, dur, file: f, from: s.start, pic: f.type === 'video' ? { file: f, from: s.start } : { card: f.analysis && f.analysis.camera ? cap(f.analysis.camera) : 'Audio recording', sub: label(f) }, sound: [{ file: f, from: s.start, gain: 1 }], seg: s });
+      const pic = (s.media || []).length ? { own: s.media } : f.type === 'video' ? { file: f, from: s.start } : { card: f.analysis && f.analysis.camera ? cap(f.analysis.camera) : 'Audio recording', sub: label(f) };
+      out.push({ kind: 'clip', t0: t, dur, file: f, from: s.start, pic, sound: [{ file: f, from: s.start, gain: 1 }], seg: s });
       clips++;
       t += dur;
       continue;
@@ -334,8 +241,8 @@ function buildPlan(c, matched) {
       pic = { file: f, from: next ? next.start : Math.max(0, prev.end - 0.1), freeze: true };
       files.add(f.id); if (!NATIVE.test(f.name)) convert.add(f.id);
     };
-    const own = ((n.media || {})[s.id] || []);
-    if (mode === 'own' && own.length) pic = { own };
+    const own = s.media || [];
+    if (own.length) pic = { own };
     else if (mode === 'next' || mode === 'own') { if (!tryNext() && !tryPrev()) still(); }
     else if (mode === 'prev') { if (!tryPrev() && !tryNext()) still(); }
     else if (mode === 'still') still();
@@ -345,6 +252,15 @@ function buildPlan(c, matched) {
   return { segs: out, total: t, clips, files, convert };
 }
 const cap = s => String(s || '').replace(/^./, x => x.toUpperCase());
+// Caption colors per speaker (readable on the dark caption box)
+const SPEAKER_COLORS = ['#ffffff', '#ffd84d', '#7fdcff', '#9be89b', '#ff9fcf', '#ffb26b', '#c7a6ff'];
+function splitCue(q, max) {
+  if (q.words.length <= max) return [q];
+  const out = [];
+  for (let i = 0; i < q.words.length; i += max) { const w = q.words.slice(i, i + max); out.push({ s: w[0].s, e: w[w.length - 1].e, words: w }); }
+  out[out.length - 1].e = Math.max(out[out.length - 1].e, q.e);
+  return out;
+}
 
 // ---------- captions ----------
 function captionCues(plan, mode, aspect) {
@@ -360,22 +276,26 @@ function captionCues(plan, mode, aspect) {
     }
   }
   if (mode === 'footage' || mode === 'both') {
-    let p = 0;
+    const colors = new Map(); // speaker name -> color, in the order they are first heard
+    const colorOf = who => { if (!colors.has(who)) colors.set(who, SPEAKER_COLORS[colors.size % SPEAKER_COLORS.length]); return colors.get(who); };
     for (const sg of plan.segs.filter(x => x.kind === 'clip')) {
       const f = sg.file;
+      const names = X.speakerMap(f);
       const utt = ((f.transcript && f.transcript.utterances) || []).filter(u => u.e > sg.from && u.s < sg.from + sg.dur);
-      const words = [];
       for (const u of utt) {
         const ws = String(u.text || '').split(/\s+/).filter(Boolean);
         if (!ws.length) continue;
         const step = (u.e - u.s) / ws.length;
-        p++;
+        const words = [];
         ws.forEach((w, k) => {
           const s = u.s + step * k, e = s + step;
-          if (s >= sg.from - 0.05 && e <= sg.from + sg.dur + 0.3) words.push({ w, p, s: sg.t0 + (s - sg.from), e: sg.t0 + Math.min(sg.dur, e - sg.from) });
+          if (s >= sg.from - 0.05 && e <= sg.from + sg.dur + 0.3) words.push({ w, p: 0, s: sg.t0 + (s - sg.from), e: sg.t0 + Math.min(sg.dur, e - sg.from) });
         });
+        if (!words.length) continue;
+        const who = names[u.sp] || 'Speaker ' + u.sp;
+        // the speaker's name takes room on screen, so lines are a little shorter
+        for (const q of buildCues(words, preset).flatMap(q => splitCue(q, preset === 'bold' ? 3 : 9))) { q.who = who; q.color = colorOf(who); all.push(q); }
       }
-      all = all.concat(buildCues(words, preset));
     }
   }
   all.sort((a, b) => a.s - b.s);
@@ -490,7 +410,9 @@ async function exportVideo() {
       if (sg.pic && sg.pic.own) {
         const d = sg.dur / sg.pic.own.length;
         const pics = sg.pic.own.map((it, k) => ({ t: k * d, dur: d, pic: it.kind === 'photo' ? { img: 'own:' + it.id, kb: k % 2 } : { sid: 'own:' + it.id, from: 0 } }));
-        const sound = sg.pic.own.map((it, k) => it.kind === 'video' ? { sid: 'own:' + it.id, from: 0, gain: duckGain, at: k * d, len: d } : null).filter(Boolean);
+        const sound = sg.kind === 'clip'
+          ? sg.sound.map(s => { const w = where(s.file, s.from); return { sid: w.sid, from: w.from, gain: s.gain }; })
+          : sg.pic.own.map((it, k) => it.kind === 'video' ? { sid: 'own:' + it.id, from: 0, gain: duckGain, at: k * d, len: d } : null).filter(Boolean);
         return { t0: sg.t0, dur: sg.dur, pic: null, pics, sound, narr: sg.narr || null };
       }
       let pic = null;
@@ -604,7 +526,13 @@ async function loadSeg(i, into) {
     const u = await mediaUrl(it).catch(() => null);
     if (token !== PV.token) return;
     if (it.kind === 'photo') { V.classList.add('hidden'); IMG.src = u || ''; IMG.classList.remove('hidden'); IMG.dataset.kb = k % 2; }
-    else { if (V.dataset.src !== u) { V.src = u || ''; V.dataset.src = u || ''; } V.muted = false; V.volume = PV.duck; PV.vidFrom = 0 - k * d; }
+    else { if (V.dataset.src !== u) { V.src = u || ''; V.dataset.src = u || ''; } V.muted = sg.kind === 'clip'; V.volume = PV.duck; PV.vidFrom = 0 - k * d; }
+    if (sg.kind === 'clip' && sg.sound[0]) {
+      const md = await previewMedia(sg.sound[0].file);
+      if (token !== PV.token) return;
+      const su = md.audio || md.video;
+      if (su) { A.src = su; A.dataset.src = su; A.volume = 1; PV.audFrom = sg.sound[0].from - (sg.t0 - sg.t0); }
+    }
   } else if (pic && pic.file) {
     const md = await previewMedia(pic.file);
     if (token !== PV.token) return;
@@ -666,7 +594,7 @@ function tick() {
   $('fpTime').textContent = X.fmtH(T);
   const cue = PV.cues.find(q => T >= q.s && T < q.e);
   const cap = $('fpCap');
-  if (cue) { cap.innerHTML = `<span>${X.esc(cue.words.map(w => w.w).join(' '))}</span>`; cap.classList.remove('hidden'); } else cap.classList.add('hidden');
+  if (cue) { cap.innerHTML = `<span style="color:${cue.color || '#fff'}">${cue.who ? X.esc(cue.who) + ': ' : ''}${X.esc(cue.words.map(w => w.w).join(' '))}</span>`; cap.classList.remove('hidden'); } else cap.classList.add('hidden');
   requestAnimationFrame(tick);
 }
 
