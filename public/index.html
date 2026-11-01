@@ -225,6 +225,7 @@
           <div class="tabs" id="caseTabs">
             <button class="tab active" data-tab="files" type="button">Files</button>
             <button class="tab" data-tab="research" type="button">Research</button>
+            <button class="tab" data-tab="story" type="button">Story</button>
             <button class="tab" data-tab="context" type="button">Case context</button>
           </div>
 
@@ -265,6 +266,29 @@
             </div>
             <div id="researchChecks" class="checks hidden"></div>
             <div id="researchBody" class="research"></div>
+          </div>
+
+          <!-- Story -->
+          <div id="ctab-story" class="hidden">
+            <div class="case-actions story-actions">
+              <label class="story-len">Target length <input id="storyTarget" type="number" min="5" max="120" step="5" value="30"> min</label>
+              <button id="storyBuild" class="btn primary" type="button">Build story</button>
+              <button id="storyPlay" class="btn ghost" type="button">Preview from start</button>
+              <button id="storyScript" class="btn ghost" type="button">Download script</button>
+              <button id="storyCopy" class="btn ghost" type="button">Copy narration</button>
+              <div class="grow"></div>
+              <span id="storyTotals" class="mono muted small-text"></span>
+            </div>
+            <details class="story-style">
+              <summary>Narration style notes for this case (optional)</summary>
+              <textarea id="storyStyle" rows="3" placeholder="e.g. Keep the intro under a minute. Don't name the sister. Mention the case is from Jacksonville."></textarea>
+            </details>
+            <div id="storyInfo"></div>
+            <ol id="storyList" class="story-list"></ol>
+            <div id="storyAdd" class="story-add hidden">
+              <button id="storyAddNarr" class="btn small ghost" type="button">+ Add narration</button>
+              <select id="storyAddClip"><option value="">+ Add a clip from a key moment…</option></select>
+            </div>
           </div>
 
           <!-- Context -->
@@ -332,6 +356,27 @@
   </dialog>
 
   <!-- Shot editor -->
+  <!-- Story preview -->
+  <dialog id="storyDialog" class="swap story-preview">
+    <div class="swap-head">
+      <div><div id="spMeta" class="mono muted"></div><h3 id="spTitle">Preview</h3></div>
+      <div class="row-btns">
+        <label class="muted small-text sp-voice"><input id="spVoice" type="checkbox"> Read narration with a robot voice</label>
+        <button id="spPrev" class="btn ghost small" type="button">Back</button>
+        <button id="spPause" class="btn ghost small" type="button">Pause</button>
+        <button id="spNext" class="btn ghost small" type="button">Skip</button>
+        <button id="spClose" class="btn ghost small" type="button">Close</button>
+      </div>
+    </div>
+    <div class="sp-stage">
+      <video id="spVideo" playsinline></video>
+      <audio id="spAudio"></audio>
+      <div id="spNarr" class="sp-narr hidden"></div>
+    </div>
+    <div class="sp-bar"><div id="spFill"></div></div>
+    <p id="spNote" class="muted small-text"></p>
+  </dialog>
+
   <dialog id="editDialog" class="swap editor">
     <div class="swap-head">
       <div>

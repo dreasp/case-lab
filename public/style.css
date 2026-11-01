@@ -300,3 +300,43 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .check.ok .check-title { color: var(--muted); }
 .check-text { font-size: 13px; line-height: 1.45; }
 .check-btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+/* Story builder */
+.story-actions { flex-wrap: wrap; }
+.story-len { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.story-len input { width: 64px; background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 7px 8px; font: inherit; }
+.story-style { margin: 10px 0; font-size: 13px; color: var(--muted); }
+.story-style summary { cursor: pointer; }
+.story-style textarea { margin-top: 8px; }
+#storyInfo { display: grid; gap: 10px; margin: 10px 0; }
+.story-note { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; font-size: 13px; }
+.story-note ul { margin: 6px 0 0; padding-left: 18px; }
+.story-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.seg { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.seg.narr { border-left: 3px solid var(--gold); }
+.seg.clip { border-left: 3px solid #5b8def; }
+.seg.dragging { opacity: .4; }
+.seg.drop-before { box-shadow: 0 -3px 0 var(--gold); }
+.seg-handle { cursor: grab; color: var(--muted); font-size: 18px; line-height: 1; user-select: none; padding-top: 2px; }
+.seg-num { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 4px; }
+.seg-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.seg-head strong { font-size: 14px; }
+.seg-file { font-size: 12px; color: var(--muted); }
+.seg-why { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.seg-trim { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; font-size: 12px; }
+.seg-trim input { width: 78px; background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 5px 6px; font: 12px 'IBM Plex Mono', ui-monospace, monospace; }
+.seg-trim .btn { padding: 3px 7px; font-size: 11px; }
+.seg-lines { margin-top: 8px; font-size: 12px; line-height: 1.45; color: #c9ccd3; max-height: 92px; overflow: auto; }
+.seg-lines b { color: var(--muted); font-weight: 600; }
+.seg textarea { font-size: 14px; line-height: 1.5; }
+.seg-side { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.seg-side .btn { padding: 4px 9px; font-size: 12px; }
+.story-add { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.story-add select { background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 13px; max-width: 100%; }
+.story-preview { width: min(1000px, 96vw); }
+.sp-stage { position: relative; background: #000; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; margin-top: 12px; }
+.sp-stage video { width: 100%; height: 100%; object-fit: contain; }
+.sp-narr { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 8%; text-align: center; font-size: clamp(16px, 2.4vw, 24px); line-height: 1.5; background: #0c0d10; color: var(--text); }
+.sp-bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 10px; overflow: hidden; }
+.sp-bar div { height: 100%; width: 0; background: var(--gold); }
+.sp-voice { display: flex; gap: 6px; align-items: center; }
+@media (max-width: 700px) { .seg { grid-template-columns: 1fr; } .seg-handle { display: none; } .seg-side { flex-direction: row; align-items: center; } }

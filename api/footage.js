@@ -339,6 +339,82 @@ Return JSON:
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ---------- Story builder: rough cut in story order with narration drafts ----------
+const STORY_STYLE = `NARRATION STYLE (the channel's own standards):
+- Victim-centered: remember the victim as a person; never sensational, never gory, never describe a case as "fascinating".
+- Factually precise: only say what the files or the case context support. Say "police say", "according to" or "alleged" where something is not proven; only call someone guilty if the case context says they were convicted or pleaded guilty.
+- Written to be read aloud: full, flowing sentences, not fragments. Plain, warm, serious tone.
+- Never use em dashes. Use commas or full stops instead.
+- Each narration part sets up the next clip: who we are about to see, where, and why it matters. Don't retell what the viewer is about to watch.
+- Vary the ending reflection from case to case. The very last narration part ends with exactly: "Until next time, stay safe, stay aware, and stay curious. I'll see you in the next video. Bye!"`;
+
+router.post('/case/story', async (req, res) => {
+  try {
+    const { title, context, style, targetMin = 30, research, files } = req.body || {};
+    const target = Math.max(5, Math.min(120, Number(targetMin) || 30));
+    const fileText = (files || []).map(f => `=== FILE ${f.id}: ${f.name} (${f.type}, ${fmtT(f.duration || 0)} long${f.clock ? ', on-screen clock at start ' + f.clock : ''}${f.camera ? ', ' + f.camera : ''})
+Speakers: ${Object.entries(f.speakers || {}).map(([k, v]) => k + ' = ' + v).join(', ')}
+Summary: ${f.summary || ''}
+Moments:
+${(f.moments || []).map(m => `- [${fmtT(m.start)} to ${fmtT(m.end)}] (${m.importance || '?'}/5${m.sensitive ? ', SENSITIVE' : ''}) ${m.title}: ${m.description}${m.quote ? ` Quote: "${String(m.quote).slice(0, 300)}"` : ''}`).join('\n')}`).join('\n\n').slice(0, 400000);
+    const r = research || {};
+    const prompt = `${STYLE}
+
+You are the editor of a long-form true crime YouTube video built mostly from real footage (bodycam, interrogation, 911 calls), with short narration in between, in the style of channels like JCS.
+
+CASE: ${title || ''}
+CASE CONTEXT (written by the creator, trust it over the footage analysis):
+"""${String(context || '').slice(0, 10000)}"""
+
+${STORY_STYLE}
+${style ? `\nEXTRA STYLE NOTES FROM THE CREATOR:\n"""${String(style).slice(0, 3000)}"""\n` : ''}
+CASE RESEARCH (already put together from all files):
+Overview: ${r.overview || ''}
+Story beats:
+${(r.story_beats || []).map((b, i) => `${i + 1}. ${b.title}: ${b.description}`).join('\n')}
+Key quotes:
+${(r.key_quotes || []).map(q => `- ${q.speaker}: "${String(q.quote || '').slice(0, 300)}"`).join('\n')}
+
+THE FOOTAGE (every time is from the start of that file):
+${fileText}
+
+Build the rough cut.
+- Target length: about ${target} minutes in total. About 80% of the time should be footage clips, 20% narration.
+- Start with a short cold open: one gripping but not graphic clip (20 to 60 seconds), then a narration part that introduces the case.
+- After that, tell the story in the order it happened, following the story beats. Several clips in a row without narration are fine when the footage speaks for itself.
+- Clips: usually 20 seconds to 3 minutes. Pick whole exchanges: start a little before the first line and end after the last line, so nobody is cut off mid-sentence. Use the moment times above; you may widen a clip to include the lines around a moment.
+- Skip waiting, silence, repeats and small talk. Leave out anything marked SENSITIVE unless the story truly needs it, and never anything showing a child's body or injuries.
+- Narration parts: 2 to 6 sentences each (about 15 to 45 seconds read aloud). The first one can be longer (up to about 90 seconds).
+- Write every time as a string like "1:02:03" or "4:05", copied in the same style as above. Never as a number of seconds.
+
+Return JSON:
+{
+  "title_ideas": [ 3 YouTube title ideas, factual and respectful ],
+  "segments": [
+    { "type": "clip", "file": file id, "start": "h:mm:ss", "end": "h:mm:ss", "label": short label for the editor, "why": one sentence on why this clip is here },
+    { "type": "narration", "text": the narration to record }
+  ],
+  "notes": [ things the creator should check or decide before recording ]
+}`;
+    const out = await generateJSON([{ text: prompt }], { temperature: 0.5 });
+    const byId = Object.fromEntries((files || []).map(f => [String(f.id), f]));
+    const segments = [];
+    for (const sgm of (out && out.segments) || []) {
+      if (!sgm) continue;
+      if (sgm.type === 'narration' && String(sgm.text || '').trim()) { segments.push({ type: 'narration', text: String(sgm.text).replace(/\s*[—–]\s*/g, ', ').trim() }); continue; }
+      const f = byId[sgm.file];
+      if (sgm.type !== 'clip' || !f) continue;
+      let start = parseTime(sgm.start), end = parseTime(sgm.end);
+      if (start == null || end == null) continue;
+      const dur = f.duration || end;
+      start = Math.max(0, Math.min(start, dur)); end = Math.max(0, Math.min(end, dur));
+      if (end - start < 3) continue;
+      segments.push({ type: 'clip', file: f.id, start, end, label: String(sgm.label || ''), why: String(sgm.why || '') });
+    }
+    res.json({ result: { title_ideas: (out && out.title_ideas) || [], notes: (out && out.notes) || [], segments } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Real clock time of a moment: the file's on-screen start clock plus the time into the file
 function clockAt(clock, t) {
   if (!clock) return null;
