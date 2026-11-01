@@ -314,6 +314,7 @@
               <p id="finSummary" class="muted small-text"></p>
               <p class="muted small-text">Built at full quality from your original files, straight onto your computer. It can take a while for a long video: keep this tab open (you can use other tabs and apps meanwhile).</p>
               <div class="case-actions">
+                <button id="finPreview" class="btn" type="button">▶ Preview with narration</button>
                 <button id="finExport" class="btn primary" type="button">Export video</button>
                 <button id="finCancel" class="btn ghost hidden" type="button">Cancel</button>
               </div>
@@ -431,6 +432,32 @@
     </div>
     <div class="sp-bar"><div id="spFill"></div></div>
     <p id="spNote" class="muted small-text"></p>
+  </dialog>
+
+  <!-- Final video preview -->
+  <dialog id="finDialog" class="swap story-preview">
+    <div class="swap-head">
+      <div><div id="fpMeta" class="mono muted"></div><h3 id="fpTitle">Preview</h3></div>
+      <div class="row-btns">
+        <button id="fpPrev" class="btn ghost small" type="button" title="Previous part">⏮</button>
+        <button id="fpBack" class="btn ghost small" type="button">−10s</button>
+        <button id="fpPlay" class="btn small" type="button">Pause</button>
+        <button id="fpFwd" class="btn ghost small" type="button">+10s</button>
+        <button id="fpNext" class="btn ghost small" type="button" title="Next part">⏭</button>
+        <button id="fpClose" class="btn ghost small" type="button">Close</button>
+      </div>
+    </div>
+    <div class="sp-stage fp-stage" id="fpStage">
+      <video id="fpVideo" playsinline></video>
+      <img id="fpImg" class="fp-img hidden" alt="">
+      <div id="fpCard" class="sp-narr hidden"></div>
+      <div id="fpCap" class="fp-cap hidden"></div>
+    </div>
+    <audio id="fpAudio"></audio>
+    <audio id="fpNarr"></audio>
+    <div class="fp-bar" id="fpBar"><div id="fpFill"></div></div>
+    <div class="fp-time mono small-text"><span id="fpTime">0:00</span><span id="fpTotal"></span></div>
+    <p id="fpNote" class="muted small-text"></p>
   </dialog>
 
   <dialog id="editDialog" class="swap editor">

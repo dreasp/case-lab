@@ -1005,7 +1005,7 @@ function renderViewerList() {
 
 // ---------- wiring ----------
 function wire() {
-  initFinish({ cur: () => cur, save, api, esc, fmtH, fileById, getLocalFile, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), getFile: k => store.getFile(k) });
+  initFinish({ cur: () => cur, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), getFile: k => store.getFile(k) });
   initStory({ cur: () => cur, contextText, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, openViewer, speakerMap, refreshUsage, NATIVE_VIDEO });
   $('newCase').addEventListener('click', () => { if (running) return alert('Wait for the analysis to finish or press Stop first.'); showNew(); $('caseTitleInput').focus(); });
   $('caseCreate').addEventListener('click', async () => {

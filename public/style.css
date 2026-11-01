@@ -376,3 +376,24 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 #finProgress { border-radius: 10px; border: 1px solid var(--line); }
 .np-under, .fin-opts label { white-space: nowrap; }
 .fin-opts select { max-width: 280px; }
+/* Your photos and videos under narration */
+.np-media { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 10px; }
+.np-thumb { display: grid; gap: 4px; width: 120px; }
+.np-thumb-pic { position: relative; width: 120px; height: 68px; border-radius: 6px; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--muted); }
+.np-thumb-pic img, .np-thumb-pic video { width: 100%; height: 100%; object-fit: cover; }
+.np-vid { position: absolute; right: 5px; bottom: 3px; font-size: 11px; color: #fff; text-shadow: 0 0 3px #000; }
+.np-thumb-btns { display: flex; gap: 4px; justify-content: flex-end; }
+.np-thumb-btns .btn { padding: 1px 7px; font-size: 11px; }
+.np-media-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.np-media-add select { background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 13px; max-width: 260px; }
+/* Final preview */
+.fp-stage { overflow: hidden; }
+.fp-stage video { position: absolute; inset: 0; }
+.fp-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; transform-origin: center; }
+.fp-cap { position: absolute; left: 8%; right: 8%; bottom: 7%; text-align: center; font: 600 clamp(13px, 1.9vw, 20px)/1.35 Arial, Helvetica, sans-serif; color: #fff; }
+.fp-cap span { background: rgba(0,0,0,.62); padding: 2px 8px; border-radius: 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.fp-bar { position: relative; height: 10px; background: var(--line); border-radius: 5px; margin-top: 10px; cursor: pointer; overflow: hidden; }
+.fp-bar div { height: 100%; width: 0; background: var(--gold); pointer-events: none; }
+.fp-bar i { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--bg); pointer-events: none; }
+.fp-time { display: flex; justify-content: space-between; color: var(--muted); margin-top: 4px; }
+#fpCard { white-space: pre-line; }

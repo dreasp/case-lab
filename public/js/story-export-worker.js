@@ -205,7 +205,7 @@ function fadeEdges(x, sec = 0.03) {
 }
 
 // Soft limiter so peaks never clip
-const limit = v => { const a = Math.abs(v); return a <= 0.7 ? v : Math.sign(v) * (0.7 + 0.22 * Math.tanh((a - 0.7) / 0.22)); };
+const limit = v => { const a = Math.abs(v); return a <= 0.65 ? v : Math.sign(v) * (0.65 + 0.22 * Math.tanh((a - 0.65) / 0.22)); };
 
 // ---------- main ----------
 async function pickVideoCodec(W, H, bitrate) {
@@ -258,8 +258,9 @@ async function run(job) {
       try {
         await src.open();
         if (src.aErr && !src.aWarned) { problems.push(src.aErr); src.aWarned = true; }
-        const x = fadeEdges(level(await soundOf(src, snd.from, sg.dur), 0.1));
-        for (let i = 0; i < n; i++) mix[i] += x[i] * snd.gain;
+        const at = Math.round((snd.at || 0) * SR);
+        const x = fadeEdges(level(await soundOf(src, snd.from, snd.len || sg.dur), 0.1));
+        for (let i = 0; i < x.length && at + i < n; i++) mix[at + i] += x[i] * snd.gain;
       } catch (e) { problems.push(`Sound of "${src.name}" at ${fmtTime(sg.t0)}: ${e.message}`); }
     }
     if (sg.narr && narr) {
@@ -300,6 +301,18 @@ async function run(job) {
   };
   const frameMode = src => { const r = (src.v.w / src.v.h) / (W / H); return { mode: r < 0.9 || r > 1.11 ? 'fit' : 'fill' }; };
 
+  // A narration part can show several of your photos/videos in a row: one picture slot each
+  const vsegs = [];
+  for (const x of segs) {
+    if (x.pics && x.pics.length) x.pics.forEach(p => vsegs.push({ t0: x.t0 + p.t, dur: p.dur, pic: p.pic }));
+    else vsegs.push({ t0: x.t0, dur: x.dur, pic: x.pic });
+  }
+  const images = new Map(); // source id -> decoded photo
+  const imageOf = async sid => {
+    if (!images.has(sid)) images.set(sid, await createImageBitmap(srcs[sid].blob).catch(e => { problems.push(`Photo "${srcs[sid].name}" could not be read.`); return null; }));
+    return images.get(sid);
+  };
+
   let snapshot = null;
   const nFrames = Math.ceil(total * FPS);
   let si = -1, sg = null, rd = null, held = null;
@@ -308,18 +321,18 @@ async function run(job) {
     if (encErr) throw encErr;
     const t = k / FPS;
     let changed = false;
-    while (si < segs.length - 1 && (si < 0 || t >= segs[si].t0 + segs[si].dur)) { si++; changed = true; }
+    while (si < vsegs.length - 1 && (si < 0 || t >= vsegs[si].t0 + vsegs[si].dur)) { si++; changed = true; }
     if (changed) {
       if (k > 0) { if (snapshot) snapshot.close(); snapshot = await createImageBitmap(canvas); }
-      sg = segs[si];
+      sg = vsegs[si];
       if (held) { held.close(); held = null; }
       rd = null;
-      if (sg.pic && sg.pic.sid) {
+      if (sg.pic && sg.pic.sid && !sg.pic.img) {
         try { rd = await reader(sg.pic.sid); if (!rd && srcs[sg.pic.sid].vErr) problems.push(srcs[sg.pic.sid].vErr); } catch (e) { problems.push(`Picture of "${srcs[sg.pic.sid].name}" at ${fmtTime(sg.t0)}: ${e.message}`); }
         if (rd) rd.last = -1; // start fresh at this segment
       }
       // close readers no later segment uses
-      for (const [sid, r] of frames) if (!segs.slice(si).some(x => x.pic && x.pic.sid === sid)) { r.close(); frames.delete(sid); }
+      for (const [sid, r] of frames) if (!vsegs.slice(si).some(x => x.pic && x.pic.sid === sid)) { r.close(); frames.delete(sid); }
     }
     const into = t - sg.t0;
     ctx.globalAlpha = 1;
@@ -327,7 +340,11 @@ async function run(job) {
     const fading = si > 0 && snapshot && into < FADE;
     if (fading) ctx.drawImage(snapshot, 0, 0, W, H);
     ctx.globalAlpha = fading ? Math.max(0.05, into / FADE) : 1;
-    if (rd) {
+    if (sg.pic && sg.pic.img) {
+      const bmp = await imageOf(sg.pic.img);
+      const p = Math.min(1, into / Math.max(0.1, sg.dur));
+      if (bmp) CaseDraw.drawMedia(ctx, bmp, W, H, { mode: 'auto' }, sg.pic.kb ? 1.08 - 0.08 * p : 1 + 0.08 * p, false);
+    } else if (rd) {
       let pic = null;
       try {
         if (sg.pic.freeze) {
@@ -358,6 +375,7 @@ async function run(job) {
     }
   }
   frames.forEach(r => r.close());
+  images.forEach(b => b && b.close());
   if (held) held.close();
   if (snapshot) snapshot.close();
   post('progress', { frac: 1, text: 'Finishing the file…' });

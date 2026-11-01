@@ -10,16 +10,31 @@ const LEAD = 0.15, TAIL = 0.4;      // short pauses around each narration part
 const NATIVE = /\.(mp4|mov|m4v)$/i;
 const label = f => f ? (f.path || f.name) : 'missing file';
 const fmt1 = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = t - m * 60; return `${m}:${s.toFixed(1).padStart(4, '0')}`; };
-const UNDER = { next: 'Lead-up to the next clip', prev: 'What comes after the last clip', still: 'Still frame of the next clip', black: 'Black screen' };
+const UNDER = { next: 'Lead-up to the next clip', prev: 'What comes after the last clip', still: 'Still frame of the next clip', own: 'My photos or videos', black: 'Black screen' };
+const IMG = /\.(jpe?g|png|webp|gif)$/i;
 
 export function initFinish(helpers) {
   X = helpers;
   $('narrFile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) uploadNarration(f); });
   $('narrParts').addEventListener('click', onPartClick);
   $('narrParts').addEventListener('change', async e => {
-    if (!e.target.dataset.under) return;
-    const n = narr(); n.under = n.under || {}; n.under[e.target.dataset.under] = e.target.value;
-    await X.save();
+    const d = e.target.dataset;
+    if (d.under) {
+      const n = narr(); n.under = n.under || {}; n.under[d.under] = e.target.value;
+      await X.save();
+      renderFinish();
+    } else if (d.mediaAdd) {
+      const files = [...e.target.files]; e.target.value = '';
+      await addMedia(d.mediaAdd, files);
+    } else if (d.casePhoto) {
+      const fid = e.target.value; e.target.value = '';
+      const f = fid && X.fileById(fid);
+      if (!f) return;
+      const n = narr(); n.media = n.media || {};
+      (n.media[d.casePhoto] = n.media[d.casePhoto] || []).push({ id: Math.random().toString(36).slice(2, 10), kind: 'photo', name: label(f), caseFile: f.id });
+      await X.save();
+      renderFinish();
+    }
   });
   $('finDuck').addEventListener('input', () => { $('finDuckVal').textContent = $('finDuck').value + '%'; });
   ['finAspect', 'finCaps', 'finDuck'].forEach(id => $(id).addEventListener('change', async () => {
@@ -27,6 +42,7 @@ export function initFinish(helpers) {
     await X.save();
   }));
   $('finExport').addEventListener('click', exportVideo);
+  wireFinalPreview();
   $('finCancel').addEventListener('click', () => { if (worker) worker.postMessage({ type: 'cancel' }); });
   const a = $('narrAudio');
   a.addEventListener('timeupdate', () => { if (a.dataset.stop && a.currentTime >= +a.dataset.stop) { a.pause(); delete a.dataset.stop; } });
@@ -115,6 +131,16 @@ async function narrSrc() {
 async function onPartClick(e) {
   const b = e.target.closest('[data-act]');
   if (!b) return;
+  if (b.dataset.act === 'media-del' || b.dataset.act === 'media-left') {
+    const n = narr();
+    const list = (n.media || {})[b.dataset.part] || [];
+    const i = list.findIndex(x => x.id === b.dataset.item);
+    if (i < 0) return;
+    if (b.dataset.act === 'media-del') list.splice(i, 1); else if (i > 0) [list[i - 1], list[i]] = [list[i], list[i - 1]];
+    await X.save();
+    renderFinish();
+    return;
+  }
   const c = X.cur();
   const id = b.closest('[data-id]').dataset.id;
   const m = (matchParts(c) || []).find(x => x.id === id);
@@ -166,11 +192,87 @@ export function renderFinish() {
         <label class="small-text muted np-under">Under it <select data-under="${p.id}">${Object.entries(UNDER).map(([k, v]) => `<option value="${k}" ${(under[p.id] || 'next') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       </div>
       <div class="np-text">${X.esc(p.text.slice(0, 220))}${p.text.length > 220 ? '…' : ''}</div>
+      ${(under[p.id] || 'next') === 'own' ? mediaStrip(c, p.id) : ''}
     </li>`;
   }).join('');
+  fillThumbs();
   const plan = m ? buildPlan(c, m) : null;
   $('finSummary').textContent = plan ? `The video will be about ${X.fmtH(plan.total)} long: ${plan.clips} clips from ${plan.files.size} file${plan.files.size === 1 ? '' : 's'} and ${parts.length} narration parts.${plan.convert.size ? ` ${plan.convert.size} file${plan.convert.size === 1 ? '' : 's'} (like WMV) will have the needed parts converted first.` : ''}` : 'Upload your narration to continue.';
   $('finExport').disabled = !plan || !!worker;
+  $('finPreview').disabled = !plan;
+}
+
+// ---------- your own photos and videos under a narration part ----------
+const casePhotos = c => c.files.filter(f => f.type === 'photo');
+function mediaStrip(c, pid) {
+  const items = ((c.narr && c.narr.media) || {})[pid] || [];
+  const photos = casePhotos(c);
+  return `<div class="np-media">
+    ${items.map((it, k) => `<div class="np-thumb" title="${X.esc(it.name)}">
+      <div class="np-thumb-pic" data-thumb="${it.id}"></div>
+      <div class="np-thumb-btns">${k ? `<button class="btn ghost" type="button" data-act="media-left" data-part="${pid}" data-item="${it.id}" title="Show earlier">←</button>` : ''}<button class="btn ghost" type="button" data-act="media-del" data-part="${pid}" data-item="${it.id}" title="Remove">✕</button></div>
+    </div>`).join('')}
+    <div class="np-media-add">
+      <label class="btn small">+ Add photos or videos<input type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,.mp4,.mov,.m4v" data-media-add="${pid}" hidden></label>
+      ${photos.length ? `<select data-case-photo="${pid}"><option value="">+ Add a photo from this case…</option>${photos.map(f => `<option value="${f.id}">${X.esc(label(f))}</option>`).join('')}</select>` : ''}
+      <span class="muted small-text">${items.length ? `${items.length} item${items.length > 1 ? 's' : ''}, shown one after another while you speak (photos slowly zoom).` : 'Nothing added yet: the lead-up to the next clip is used until you add something.'}</span>
+    </div>
+  </div>`;
+}
+
+const urlCache = new Map();
+async function mediaUrl(it) {
+  if (urlCache.has(it.id)) return urlCache.get(it.id);
+  let blob = null;
+  if (it.key) blob = await X.getFile(it.key);
+  else if (it.caseFile) {
+    const f = X.fileById(it.caseFile);
+    blob = f ? await X.getLocalFile(f).catch(() => null) : null;
+    if (!blob && f && f.copyKey) { const [u] = await X.signedUrls([f.copyKey]); if (u) { urlCache.set(it.id, u); return u; } }
+  }
+  if (!blob) return null;
+  const u = URL.createObjectURL(blob);
+  urlCache.set(it.id, u);
+  return u;
+}
+async function mediaBlob(it) {
+  if (it.key) return X.getFile(it.key);
+  const f = X.fileById(it.caseFile);
+  if (!f) return null;
+  const local = await X.getLocalFile(f).catch(() => null);
+  if (local) return local;
+  if (f.copyKey) { const [u] = await X.signedUrls([f.copyKey]); if (u) { const r = await fetch(u); if (r.ok) return r.blob(); } }
+  return null;
+}
+async function fillThumbs() {
+  const c = X.cur();
+  const all = Object.values((c.narr && c.narr.media) || {}).flat();
+  for (const el of document.querySelectorAll('[data-thumb]')) {
+    const it = all.find(x => x.id === el.dataset.thumb);
+    if (!it) continue;
+    const u = await mediaUrl(it).catch(() => null);
+    if (!u) { el.textContent = 'missing'; continue; }
+    el.innerHTML = it.kind === 'video' ? `<video src="${u}#t=0.5" muted preload="metadata"></video><span class="np-vid">▶</span>` : `<img src="${u}" alt="">`;
+  }
+}
+
+async function addMedia(pid, files) {
+  const c = X.cur();
+  const n = narr(); n.media = n.media || {};
+  const list = (n.media[pid] = n.media[pid] || []);
+  const skipped = [];
+  for (const file of files) {
+    const isImg = IMG.test(file.name) || /^image\//.test(file.type);
+    const isVid = /\.(mp4|mov|m4v)$/i.test(file.name);
+    if (!isImg && !isVid) { skipped.push(file.name); continue; }
+    const id = Math.random().toString(36).slice(2, 10);
+    const key = `${c.id}:m:${id}`;
+    await X.putFile(key, file);
+    list.push({ id, kind: isImg ? 'photo' : 'video', name: file.name, key });
+  }
+  await X.save();
+  renderFinish();
+  if (skipped.length) alert(`These were skipped (photos: JPG, PNG, WEBP; videos: MP4, MOV): ${skipped.join(', ')}`);
 }
 
 // ---------- the plan: every segment on the final timeline ----------
@@ -232,7 +334,9 @@ function buildPlan(c, matched) {
       pic = { file: f, from: next ? next.start : Math.max(0, prev.end - 0.1), freeze: true };
       files.add(f.id); if (!NATIVE.test(f.name)) convert.add(f.id);
     };
-    if (mode === 'next') { if (!tryNext() && !tryPrev()) still(); }
+    const own = ((n.media || {})[s.id] || []);
+    if (mode === 'own' && own.length) pic = { own };
+    else if (mode === 'next' || mode === 'own') { if (!tryNext() && !tryPrev()) still(); }
     else if (mode === 'prev') { if (!tryPrev() && !tryNext()) still(); }
     else if (mode === 'still') still();
     out.push({ kind: 'narr', t0: t, dur, pic, sound, narr: { a0: m.a0, len, lead: LEAD }, match: m, seg: s });
@@ -304,6 +408,7 @@ async function exportVideo() {
 
   const opts = (c.narr && c.narr.opts) || {};
   const aspect = opts.aspect || '16:9';
+  const duckGain = (opts.duck != null ? opts.duck : 15) / 100;
   const plan = buildPlan(c, m);
   const progress = (frac, text) => { $('finProgress').classList.remove('hidden'); $('finFill').style.width = `${Math.round(frac * 100)}%`; $('finText').textContent = text; };
   $('finExport').disabled = true; $('finCancel').classList.remove('hidden'); $('finResult').innerHTML = '';
@@ -367,9 +472,27 @@ async function exportVideo() {
     const rms = Math.sqrt(sum / Math.max(1, pcm.length / 4));
     const narrGain = rms > 1e-4 ? Math.max(0.5, Math.min(4, 0.12 / rms)) : 1;
 
+    // Your own photos and videos
+    progress(0.3, 'Getting your photos and videos ready…');
+    for (const sg of plan.segs) {
+      for (const it of (sg.pic && sg.pic.own) || []) {
+        const sid = 'own:' + it.id;
+        if (sources[sid]) continue;
+        const blob = await mediaBlob(it);
+        if (!blob) throw new Error(`"${it.name}" could not be found. Remove it from the narration part or add it again.`);
+        sources[sid] = { blob, name: it.name };
+      }
+    }
+
     // 3) The job for the background engine
     const where = (f, t) => locate.get(f.id)(t);
     const segs = plan.segs.map(sg => {
+      if (sg.pic && sg.pic.own) {
+        const d = sg.dur / sg.pic.own.length;
+        const pics = sg.pic.own.map((it, k) => ({ t: k * d, dur: d, pic: it.kind === 'photo' ? { img: 'own:' + it.id, kb: k % 2 } : { sid: 'own:' + it.id, from: 0 } }));
+        const sound = sg.pic.own.map((it, k) => it.kind === 'video' ? { sid: 'own:' + it.id, from: 0, gain: duckGain, at: k * d, len: d } : null).filter(Boolean);
+        return { t0: sg.t0, dur: sg.dur, pic: null, pics, sound, narr: sg.narr || null };
+      }
       let pic = null;
       if (sg.pic && sg.pic.file) { const w = where(sg.pic.file, sg.pic.from); pic = { sid: w.sid, from: w.from, freeze: !!sg.pic.freeze }; }
       else if (sg.pic && sg.pic.card) pic = { card: sg.pic.card, sub: sg.pic.sub };
@@ -404,4 +527,176 @@ async function exportVideo() {
     $('finProgress').classList.add('hidden');
     renderFinish();
   }
+}
+
+// ---------- preview: the whole video with your real narration, before exporting ----------
+let PV = null;
+const PLAYABLE_AUDIO = /\.(mp3|wav|m4a|aac|ogg)$/i;
+
+async function previewMedia(f) {
+  if (PV.media.has(f.id)) return PV.media.get(f.id);
+  let m = null;
+  const local = async () => { const file = await X.getLocalFile(f); const u = URL.createObjectURL(file); PV.urls.push(u); return u; };
+  if (f.type === 'video' && NATIVE.test(f.name)) { try { m = { video: await local(), audio: null, note: '' }; } catch (e) { /* copies below */ } }
+  if (!m && f.type === 'audio' && PLAYABLE_AUDIO.test(f.name)) { try { m = { video: null, audio: await local(), note: '' }; } catch (e) { /* below */ } }
+  if (!m) {
+    const [v, a] = await X.signedUrls([f.type === 'video' ? f.proxyKey : null, f.audioKey]);
+    m = { video: f.type === 'video' ? v : null, audio: a || null, note: f.type === 'video' ? 'This part shows the analysis copy (1 frame a second) with the real sound. The exported video uses your original footage.' : '' };
+  }
+  PV.media.set(f.id, m);
+  return m;
+}
+
+async function previewFinal() {
+  const c = X.cur();
+  const m = matchParts(c);
+  if (!m) return alert('Upload your narration first.');
+  const opts = (c.narr && c.narr.opts) || {};
+  const plan = buildPlan(c, m);
+  const caps = captionCues(plan, opts.caps || 'footage', '16:9');
+  let nurl;
+  try { nurl = await narrSrc(); } catch (e) { return alert(e.message); }
+  PV = { plan, cues: caps ? caps.cues : [], i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
+  $('fpNarr').src = nurl;
+  $('fpTotal').textContent = X.fmtH(plan.total);
+  $('fpBar').innerHTML = '<div id="fpFill"></div>' + plan.segs.slice(1).map(sg => `<i style="left:${sg.t0 / plan.total * 100}%"></i>`).join('');
+  $('fpPlay').textContent = 'Pause';
+  $('finDialog').showModal();
+  await seekTo(0);
+  requestAnimationFrame(tick);
+}
+
+const nowT = () => PV.playing ? PV.base + (performance.now() - PV.wall) / 1000 : PV.base;
+const segAt = T => { const s = PV.plan.segs; let i = s.findIndex(x => T < x.t0 + x.dur); return i < 0 ? s.length - 1 : i; };
+
+async function seekTo(T) {
+  if (!PV) return;
+  T = Math.max(0, Math.min(PV.plan.total - 0.05, T));
+  PV.base = T; PV.wall = performance.now();
+  const i = segAt(T);
+  await loadSeg(i, T - PV.plan.segs[i].t0);
+}
+
+function stopAll() {
+  ['fpVideo', 'fpAudio', 'fpNarr'].forEach(id => $(id).pause());
+}
+
+async function loadSeg(i, into) {
+  const token = ++PV.token;
+  stopAll();
+  const sg = PV.plan.segs[i];
+  PV.i = i; PV.narrStarted = false; PV.ownK = -1; PV.freeze = false;
+  const V = $('fpVideo'), A = $('fpAudio'), N = $('fpNarr'), IMG = $('fpImg'), CARD = $('fpCard');
+  const nIdx = PV.plan.segs.slice(0, i + 1).filter(x => x.kind === 'narr').length;
+  $('fpMeta').textContent = `${i + 1} of ${PV.plan.segs.length} · ${sg.kind === 'clip' ? 'clip' : 'narration ' + nIdx}`;
+  $('fpTitle').textContent = sg.kind === 'clip' ? `${sg.seg.label || 'Clip'} · ${label(sg.file)}` : `Narration ${nIdx}`;
+  $('fpNote').textContent = '';
+  V.classList.remove('hidden'); IMG.classList.add('hidden'); CARD.classList.add('hidden');
+  A.removeAttribute('src'); A.dataset.src = '';
+  const gain = sg.kind === 'clip' ? 1 : PV.duck;
+  const pic = sg.pic;
+  PV.vidFrom = null; PV.audFrom = null;
+  if (pic && pic.own) {
+    const d = sg.dur / pic.own.length;
+    const k = Math.min(pic.own.length - 1, Math.floor(into / d));
+    PV.ownK = k; PV.ownD = d;
+    const it = pic.own[k];
+    const u = await mediaUrl(it).catch(() => null);
+    if (token !== PV.token) return;
+    if (it.kind === 'photo') { V.classList.add('hidden'); IMG.src = u || ''; IMG.classList.remove('hidden'); IMG.dataset.kb = k % 2; }
+    else { if (V.dataset.src !== u) { V.src = u || ''; V.dataset.src = u || ''; } V.muted = false; V.volume = PV.duck; PV.vidFrom = 0 - k * d; }
+  } else if (pic && pic.file) {
+    const md = await previewMedia(pic.file);
+    if (token !== PV.token) return;
+    $('fpNote').textContent = md.note;
+    if (md.video) { if (V.dataset.src !== md.video) { V.src = md.video; V.dataset.src = md.video; } }
+    PV.freeze = !!pic.freeze;
+    V.muted = PV.freeze || !!md.audio;
+    V.volume = Math.min(1, gain);
+    PV.vidFrom = pic.from;
+    if (md.audio && !PV.freeze && sg.sound.length) { A.src = md.audio; A.dataset.src = md.audio; A.volume = Math.min(1, gain); PV.audFrom = sg.sound[0].from; }
+  } else if (pic && pic.card) {
+    V.classList.add('hidden');
+    CARD.textContent = `${pic.card}\n${pic.sub || ''}`; CARD.classList.remove('hidden');
+    const f = sg.sound[0] && sg.sound[0].file;
+    if (f) { const md = await previewMedia(f); if (token !== PV.token) return; if (md.audio) { A.src = md.audio; A.dataset.src = md.audio; A.volume = Math.min(1, gain); PV.audFrom = sg.sound[0].from; } }
+  } else {
+    V.classList.add('hidden');
+  }
+  const waitMeta = el => el.readyState >= 1 ? null : new Promise(r => { el.addEventListener('loadedmetadata', r, { once: true }); setTimeout(r, 4000); });
+  await Promise.all([PV.vidFrom != null ? waitMeta(V) : null, PV.audFrom != null ? waitMeta(A) : null]);
+  if (token !== PV.token) return;
+  if (PV.vidFrom != null) V.currentTime = Math.max(0, PV.freeze ? PV.vidFrom : PV.vidFrom + into);
+  if (PV.audFrom != null) A.currentTime = Math.max(0, PV.audFrom + into);
+  if (sg.narr) N.currentTime = sg.narr.a0 + Math.max(0, into - sg.narr.lead);
+  if (PV.playing) playNow(into);
+}
+
+function playNow(into) {
+  const sg = PV.plan.segs[PV.i];
+  if (PV.vidFrom != null && !PV.freeze) $('fpVideo').play().catch(() => {});
+  if (PV.audFrom != null) $('fpAudio').play().catch(() => {});
+  if (sg.narr && into >= sg.narr.lead && into < sg.narr.lead + sg.narr.len) { $('fpNarr').play().catch(() => {}); PV.narrStarted = true; }
+}
+
+function tick() {
+  if (!PV) return;
+  const T = nowT();
+  const segs = PV.plan.segs;
+  const sg = segs[PV.i];
+  if (sg && PV.playing) {
+    const into = T - sg.t0;
+    if (T >= PV.plan.total) { togglePlay(false); PV.base = PV.plan.total; }
+    else if (into >= sg.dur && PV.i < segs.length - 1) { loadSeg(PV.i + 1, T - segs[PV.i + 1].t0); }
+    else if (sg.pic && sg.pic.own && Math.min(sg.pic.own.length - 1, Math.floor(into / PV.ownD)) !== PV.ownK) { loadSeg(PV.i, into); }
+    else {
+      if (sg.narr && !PV.narrStarted && into >= sg.narr.lead) { $('fpNarr').play().catch(() => {}); PV.narrStarted = true; }
+      if (sg.narr && into >= sg.narr.lead + sg.narr.len) $('fpNarr').pause();
+      // keep the 1-frame-a-second picture in step with the sound
+      const V = $('fpVideo'), A = $('fpAudio');
+      if (PV.audFrom != null && PV.vidFrom != null && !PV.freeze && Math.abs((V.currentTime - PV.vidFrom) - (A.currentTime - PV.audFrom)) > 1.5) V.currentTime = PV.vidFrom + (A.currentTime - PV.audFrom);
+    }
+    const IMG = $('fpImg');
+    if (!IMG.classList.contains('hidden') && PV.ownD) {
+      const p = Math.min(1, ((T - sg.t0) % PV.ownD) / PV.ownD);
+      IMG.style.transform = `scale(${IMG.dataset.kb === '1' ? 1.08 - 0.08 * p : 1 + 0.08 * p})`;
+    }
+  }
+  const fill = $('fpFill'); if (fill) fill.style.width = `${Math.min(100, T / PV.plan.total * 100)}%`;
+  $('fpTime').textContent = X.fmtH(T);
+  const cue = PV.cues.find(q => T >= q.s && T < q.e);
+  const cap = $('fpCap');
+  if (cue) { cap.innerHTML = `<span>${X.esc(cue.words.map(w => w.w).join(' '))}</span>`; cap.classList.remove('hidden'); } else cap.classList.add('hidden');
+  requestAnimationFrame(tick);
+}
+
+function togglePlay(play) {
+  if (!PV) return;
+  const want = play === undefined ? !PV.playing : play;
+  if (want === PV.playing) return;
+  if (!want) { PV.base = nowT(); PV.playing = false; stopAll(); $('fpPlay').textContent = 'Play'; return; }
+  if (PV.base >= PV.plan.total - 0.1) { PV.playing = true; $('fpPlay').textContent = 'Pause'; seekTo(0); return; }
+  PV.wall = performance.now(); PV.playing = true; $('fpPlay').textContent = 'Pause';
+  playNow(PV.base - PV.plan.segs[PV.i].t0);
+}
+
+function closePreview() {
+  if (!PV) return;
+  PV.token++;
+  stopAll();
+  ['fpVideo', 'fpAudio'].forEach(id => { const el = $(id); el.removeAttribute('src'); el.dataset.src = ''; el.load(); });
+  PV.urls.forEach(u => URL.revokeObjectURL(u));
+  PV = null;
+}
+
+export function wireFinalPreview() {
+  $('finPreview').addEventListener('click', previewFinal);
+  $('fpClose').addEventListener('click', () => $('finDialog').close());
+  $('finDialog').addEventListener('close', closePreview);
+  $('fpPlay').addEventListener('click', () => togglePlay());
+  $('fpBack').addEventListener('click', () => PV && seekTo(nowT() - 10));
+  $('fpFwd').addEventListener('click', () => PV && seekTo(nowT() + 10));
+  $('fpPrev').addEventListener('click', () => { if (!PV) return; const T = nowT(); const sg = PV.plan.segs[PV.i]; seekTo(T - sg.t0 > 2 || PV.i === 0 ? sg.t0 : PV.plan.segs[PV.i - 1].t0); });
+  $('fpNext').addEventListener('click', () => { if (PV && PV.i < PV.plan.segs.length - 1) seekTo(PV.plan.segs[PV.i + 1].t0); });
+  $('fpBar').addEventListener('click', e => { if (!PV) return; const r = e.currentTarget.getBoundingClientRect(); seekTo((e.clientX - r.left) / r.width * PV.plan.total); });
 }
