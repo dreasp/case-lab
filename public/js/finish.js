@@ -1,0 +1,407 @@
+// Final video (footage step 3): your recorded narration is matched to the narration parts,
+// then the whole story is built at full quality from your original footage.
+
+import { alignWords, buildCues, DEFAULT_STYLE } from './captions.js';
+
+let X = null;
+const $ = id => document.getElementById(id);
+const WPS = 2.6;
+const LEAD = 0.15, TAIL = 0.4;      // short pauses around each narration part
+const NATIVE = /\.(mp4|mov|m4v)$/i;
+const label = f => f ? (f.path || f.name) : 'missing file';
+const fmt1 = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = t - m * 60; return `${m}:${s.toFixed(1).padStart(4, '0')}`; };
+const UNDER = { next: 'Lead-up to the next clip', prev: 'What comes after the last clip', still: 'Still frame of the next clip', black: 'Black screen' };
+
+export function initFinish(helpers) {
+  X = helpers;
+  $('narrFile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) uploadNarration(f); });
+  $('narrParts').addEventListener('click', onPartClick);
+  $('narrParts').addEventListener('change', async e => {
+    if (!e.target.dataset.under) return;
+    const n = narr(); n.under = n.under || {}; n.under[e.target.dataset.under] = e.target.value;
+    await X.save();
+  });
+  $('finDuck').addEventListener('input', () => { $('finDuckVal').textContent = $('finDuck').value + '%'; });
+  ['finAspect', 'finCaps', 'finDuck'].forEach(id => $(id).addEventListener('change', async () => {
+    const n = narr(); n.opts = { aspect: $('finAspect').value, caps: $('finCaps').value, duck: +$('finDuck').value };
+    await X.save();
+  }));
+  $('finExport').addEventListener('click', exportVideo);
+  $('finCancel').addEventListener('click', () => { if (worker) worker.postMessage({ type: 'cancel' }); });
+  const a = $('narrAudio');
+  a.addEventListener('timeupdate', () => { if (a.dataset.stop && a.currentTime >= +a.dataset.stop) { a.pause(); delete a.dataset.stop; } });
+}
+
+const narr = () => { const c = X.cur(); if (!c.narr) c.narr = {}; return c.narr; };
+const narrKey = c => `${c.id}:n:narration`;
+const storySegs = c => (c.story && c.story.segments) || [];
+const narrParts = c => storySegs(c).filter(s => s.type === 'narration' && (s.text || '').trim());
+
+// ---------- narration ----------
+async function uploadNarration(file) {
+  const c = X.cur();
+  if (!narrParts(c).length) return alert('Build the story first (Story tab), so the app knows your narration parts.');
+  const n = narr();
+  if (n.words && !confirm('Replace the narration audio you uploaded before?')) return;
+  $('narrInfo').textContent = 'Reading the audio…';
+  let duration = 0;
+  try { duration = await audioDuration(file); } catch (e) { return alert('This audio file could not be read. Use MP3, WAV or M4A.'); }
+  await X.putFile(narrKey(c), file);
+  Object.assign(n, { name: file.name, size: file.size, duration, words: null, adj: {}, at: Date.now() });
+  await X.save();
+  narrUrl = null;
+  renderFinish();
+  // Word timing from AssemblyAI (about 4 cents for 10 minutes)
+  $('narrInfo').textContent = 'Finding where each narration part is (word timing)… about a minute.';
+  try {
+    const r = await fetch('/api/captions/upload', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file, credentials: 'same-origin' });
+    const st = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(st.error || `Upload failed (${r.status})`);
+    let res;
+    for (let i = 0; i < 300; i++) {
+      await new Promise(ok => setTimeout(ok, 3000));
+      res = await X.api('captions/status/' + st.id);
+      if (res.status === 'completed' || res.status === 'error') break;
+    }
+    if (!res || res.status !== 'completed') throw new Error((res && res.error) || 'Timing took too long. Try again.');
+    n.words = res.words;
+    await X.save();
+    X.refreshUsage();
+  } catch (e) {
+    alert('Could not time the narration: ' + e.message);
+  }
+  renderFinish();
+}
+
+function audioDuration(file) {
+  return new Promise((ok, bad) => {
+    const a = new Audio();
+    const u = URL.createObjectURL(file);
+    a.preload = 'metadata';
+    a.onloadedmetadata = () => { URL.revokeObjectURL(u); ok(a.duration || 0); };
+    a.onerror = () => { URL.revokeObjectURL(u); bad(new Error('unreadable')); };
+    a.src = u;
+  });
+}
+
+// Where each narration part is in the recording (worked out again from the stored word timing,
+// so editing a part's text later still works)
+function matchParts(c) {
+  const n = c.narr || {};
+  const parts = narrParts(c);
+  if (!n.words || !n.words.length || !parts.length) return null;
+  const words = alignWords(parts.map(p => p.text), n.words);
+  return parts.map((p, i) => {
+    const ws = words.filter(w => w.p === i);
+    const adj = (n.adj || {})[p.id] || { d0: 0, d1: 0 };
+    let a0 = ws.length ? ws[0].s : 0, a1 = ws.length ? ws[ws.length - 1].e : 0;
+    a0 = Math.max(0, a0 - 0.05 + adj.d0);
+    a1 = Math.min(n.duration || a1 + 1, a1 + 0.1 + adj.d1);
+    const expected = ws.length / WPS;
+    const ok = a1 > a0 && (a1 - a0) > expected * 0.45 && (a1 - a0) < expected * 2.2 + 2;
+    return { id: p.id, a0, a1, ok, words: ws, text: p.text };
+  });
+}
+
+let narrUrl = null;
+async function narrSrc() {
+  if (narrUrl) return narrUrl;
+  const blob = await X.getFile(narrKey(X.cur()));
+  if (!blob) throw new Error('The narration audio is not on this computer or in the cloud. Upload it again.');
+  narrUrl = URL.createObjectURL(blob);
+  return narrUrl;
+}
+
+async function onPartClick(e) {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const c = X.cur();
+  const id = b.closest('[data-id]').dataset.id;
+  const m = (matchParts(c) || []).find(x => x.id === id);
+  if (!m) return;
+  if (b.dataset.act === 'play') {
+    const a = $('narrAudio');
+    try { a.src = await narrSrc(); } catch (err) { return alert(err.message); }
+    a.currentTime = m.a0; a.dataset.stop = m.a1; a.play().catch(() => {});
+    return;
+  }
+  const n = narr(); n.adj = n.adj || {};
+  const adj = n.adj[id] || { d0: 0, d1: 0 };
+  const d = +b.dataset.d;
+  if (b.dataset.act === 'start') adj.d0 = Math.round((adj.d0 + d) * 100) / 100; else adj.d1 = Math.round((adj.d1 + d) * 100) / 100;
+  n.adj[id] = adj;
+  await X.save();
+  renderFinish();
+}
+
+export function renderFinish() {
+  const c = X.cur();
+  if (!c) return;
+  const n = c.narr || {};
+  const o = n.opts || {};
+  $('finAspect').value = o.aspect || '16:9';
+  $('finCaps').value = o.caps || 'footage';
+  $('finDuck').value = o.duck != null ? o.duck : 15;
+  $('finDuckVal').textContent = $('finDuck').value + '%';
+  const parts = narrParts(c);
+  if (!storySegs(c).length) {
+    $('narrInfo').textContent = 'Build the story first (Story tab).';
+    $('narrParts').innerHTML = '';
+    $('finSummary').textContent = '';
+    $('finExport').disabled = true;
+    return;
+  }
+  const m = matchParts(c);
+  $('narrInfo').textContent = n.name ? `${n.name} · ${X.fmtH(n.duration || 0)}${n.words ? '' : ' · not matched yet'}` : `No narration uploaded yet. Your story has ${parts.length} narration parts.`;
+  const under = n.under || {};
+  $('narrParts').innerHTML = parts.map((p, i) => {
+    const x = m && m[i];
+    return `<li class="np ${x && !x.ok ? 'warn' : ''}" data-id="${p.id}">
+      <div class="np-head"><strong>Narration ${i + 1}</strong>
+        ${x ? `<span class="mono small-text">${fmt1(x.a0)} to ${fmt1(x.a1)} (${(x.a1 - x.a0).toFixed(1)}s)</span>
+        <button class="btn ghost small" data-act="play" type="button">▶ Listen</button>
+        <span class="np-adj small-text">Start <button class="btn ghost" data-act="start" data-d="-0.25" type="button">−</button><button class="btn ghost" data-act="start" data-d="0.25" type="button">+</button>
+        End <button class="btn ghost" data-act="end" data-d="-0.25" type="button">−</button><button class="btn ghost" data-act="end" data-d="0.25" type="button">+</button></span>
+        ${x.ok ? '<span class="np-ok small-text">Matched</span>' : '<span class="np-bad small-text">Check this one: the timing looks off</span>'}` : ''}
+        <label class="small-text muted np-under">Under it <select data-under="${p.id}">${Object.entries(UNDER).map(([k, v]) => `<option value="${k}" ${(under[p.id] || 'next') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      </div>
+      <div class="np-text">${X.esc(p.text.slice(0, 220))}${p.text.length > 220 ? '…' : ''}</div>
+    </li>`;
+  }).join('');
+  const plan = m ? buildPlan(c, m) : null;
+  $('finSummary').textContent = plan ? `The video will be about ${X.fmtH(plan.total)} long: ${plan.clips} clips from ${plan.files.size} file${plan.files.size === 1 ? '' : 's'} and ${parts.length} narration parts.${plan.convert.size ? ` ${plan.convert.size} file${plan.convert.size === 1 ? '' : 's'} (like WMV) will have the needed parts converted first.` : ''}` : 'Upload your narration to continue.';
+  $('finExport').disabled = !plan || !!worker;
+}
+
+// ---------- the plan: every segment on the final timeline ----------
+function buildPlan(c, matched) {
+  const segs = storySegs(c);
+  const byId = Object.fromEntries(matched.map(m => [m.id, m]));
+  const n = c.narr || {};
+  const duck = ((n.opts && n.opts.duck) != null ? n.opts.duck : 15) / 100;
+  const out = [];
+  const files = new Set(), convert = new Set();
+  let t = 0, clips = 0;
+  const clipAt = (i, dir) => { for (let k = i + dir; k >= 0 && k < segs.length; k += dir) if (segs[k].type === 'clip' && X.fileById(segs[k].file)) return segs[k]; return null; };
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    if (s.type === 'clip') {
+      const f = X.fileById(s.file);
+      if (!f) continue;
+      const dur = Math.max(0.5, s.end - s.start);
+      files.add(f.id); if (!NATIVE.test(f.name) || f.type === 'audio') convert.add(f.id);
+      out.push({ kind: 'clip', t0: t, dur, file: f, from: s.start, pic: f.type === 'video' ? { file: f, from: s.start } : { card: f.analysis && f.analysis.camera ? cap(f.analysis.camera) : 'Audio recording', sub: label(f) }, sound: [{ file: f, from: s.start, gain: 1 }], seg: s });
+      clips++;
+      t += dur;
+      continue;
+    }
+    const m = byId[s.id];
+    if (!m) continue;
+    const len = m.a1 - m.a0;
+    const dur = LEAD + len + TAIL;
+    const prev = clipAt(i, -1), next = clipAt(i, 1);
+    let mode = (n.under || {})[s.id] || 'next';
+    let pic = null, sound = [];
+    const tryNext = () => {
+      if (!next) return false;
+      const f = X.fileById(next.file);
+      const from = next.start - dur;
+      if (from < 0) return false;
+      if (prev && prev.file === next.file && prev.end > from) return false; // would repeat what was just shown
+      pic = f.type === 'video' ? { file: f, from } : { card: cap((f.analysis && f.analysis.camera) || 'Audio recording'), sub: label(f) };
+      sound = [{ file: f, from, gain: duck }];
+      files.add(f.id); if (!NATIVE.test(f.name) || f.type === 'audio') convert.add(f.id);
+      return true;
+    };
+    const tryPrev = () => {
+      if (!prev) return false;
+      const f = X.fileById(prev.file);
+      const from = prev.end;
+      if (from + dur > (f.duration || 0)) return false;
+      if (next && next.file === prev.file && next.start < from + dur && next.start >= from) return false;
+      pic = f.type === 'video' ? { file: f, from } : { card: cap((f.analysis && f.analysis.camera) || 'Audio recording'), sub: label(f) };
+      sound = [{ file: f, from, gain: duck }];
+      files.add(f.id); if (!NATIVE.test(f.name) || f.type === 'audio') convert.add(f.id);
+      return true;
+    };
+    const still = () => {
+      const k = next || prev;
+      if (!k) return;
+      const f = X.fileById(k.file);
+      if (f.type !== 'video') { pic = { card: cap((f.analysis && f.analysis.camera) || 'Audio recording'), sub: label(f) }; return; }
+      pic = { file: f, from: next ? next.start : Math.max(0, prev.end - 0.1), freeze: true };
+      files.add(f.id); if (!NATIVE.test(f.name)) convert.add(f.id);
+    };
+    if (mode === 'next') { if (!tryNext() && !tryPrev()) still(); }
+    else if (mode === 'prev') { if (!tryPrev() && !tryNext()) still(); }
+    else if (mode === 'still') still();
+    out.push({ kind: 'narr', t0: t, dur, pic, sound, narr: { a0: m.a0, len, lead: LEAD }, match: m, seg: s });
+    t += dur;
+  }
+  return { segs: out, total: t, clips, files, convert };
+}
+const cap = s => String(s || '').replace(/^./, x => x.toUpperCase());
+
+// ---------- captions ----------
+function captionCues(plan, mode, aspect) {
+  if (mode === 'off') return null;
+  const style = { ...DEFAULT_STYLE[aspect] };
+  const preset = style.preset;
+  let all = [];
+  if (mode === 'narr' || mode === 'both') {
+    for (const sg of plan.segs.filter(x => x.kind === 'narr')) {
+      const off = sg.t0 + LEAD - sg.match.a0;
+      const words = sg.match.words.map(w => ({ w: w.w, p: 0, s: w.s + off, e: w.e + off }));
+      all = all.concat(buildCues(words, preset));
+    }
+  }
+  if (mode === 'footage' || mode === 'both') {
+    let p = 0;
+    for (const sg of plan.segs.filter(x => x.kind === 'clip')) {
+      const f = sg.file;
+      const utt = ((f.transcript && f.transcript.utterances) || []).filter(u => u.e > sg.from && u.s < sg.from + sg.dur);
+      const words = [];
+      for (const u of utt) {
+        const ws = String(u.text || '').split(/\s+/).filter(Boolean);
+        if (!ws.length) continue;
+        const step = (u.e - u.s) / ws.length;
+        p++;
+        ws.forEach((w, k) => {
+          const s = u.s + step * k, e = s + step;
+          if (s >= sg.from - 0.05 && e <= sg.from + sg.dur + 0.3) words.push({ w, p, s: sg.t0 + (s - sg.from), e: sg.t0 + Math.min(sg.dur, e - sg.from) });
+        });
+      }
+      all = all.concat(buildCues(words, preset));
+    }
+  }
+  all.sort((a, b) => a.s - b.s);
+  for (let i = 0; i < all.length - 1; i++) if (all[i].e > all[i + 1].s) all[i].e = all[i + 1].s;
+  return { cues: all.filter(x => x.e > x.s), style };
+}
+
+// ---------- export ----------
+let worker = null;
+
+async function exportVideo() {
+  const c = X.cur();
+  const m = matchParts(c);
+  if (!m) return alert('Upload your narration first.');
+  const bad = m.filter(x => !x.ok).length;
+  if (bad && !confirm(`${bad} narration part${bad > 1 ? 's look' : ' looks'} off (marked "Check this one"). Export anyway?`)) return;
+  // Chrome only shows its "allow access" question right after a click
+  if ((await X.checkAccess()) !== 'granted') {
+    if (await X.requestAccess()) alert('Thanks. Click "Export video" again to start.');
+    else alert('Case Lab needs your OK to read the footage folder to build the video.');
+    return;
+  }
+  let fileHandle = null;
+  if (window.showSaveFilePicker) {
+    try {
+      fileHandle = await window.showSaveFilePicker({ suggestedName: `${c.title.replace(/[^\w\s()-]/g, '').trim() || 'case'}.mp4`, types: [{ description: 'MP4 video', accept: { 'video/mp4': ['.mp4'] } }] });
+    } catch (e) { if (e.name === 'AbortError') return; fileHandle = null; }
+  }
+  if (!fileHandle) return alert('Your browser can\'t save large files directly. Please use an up-to-date Chrome on a computer.');
+
+  const opts = (c.narr && c.narr.opts) || {};
+  const aspect = opts.aspect || '16:9';
+  const plan = buildPlan(c, m);
+  const progress = (frac, text) => { $('finProgress').classList.remove('hidden'); $('finFill').style.width = `${Math.round(frac * 100)}%`; $('finText').textContent = text; };
+  $('finExport').disabled = true; $('finCancel').classList.remove('hidden'); $('finResult').innerHTML = '';
+  let cancelledPrep = false;
+  $('finCancel').onclick = () => { cancelledPrep = true; if (worker) worker.postMessage({ type: 'cancel' }); };
+  try {
+    // 1) Originals: MP4/MOV are read directly; other formats get just the needed parts converted
+    progress(0, 'Getting your footage ready…');
+    const sources = {};
+    const locate = new Map(); // file id -> (t => { sid, from })
+    const used = new Map();   // file id -> [[a, b]] time ranges needed
+    const need = (f, a, b) => { if (!used.has(f.id)) used.set(f.id, []); used.get(f.id).push([a, b]); };
+    for (const sg of plan.segs) {
+      if (sg.pic && sg.pic.file) need(sg.pic.file, sg.pic.from, sg.pic.from + (sg.pic.freeze ? 0.5 : sg.dur));
+      for (const s of sg.sound) need(s.file, s.from, s.from + sg.dur);
+    }
+    const toConvert = [];
+    for (const [fid, ranges] of used) {
+      const f = X.fileById(fid);
+      const file = await X.getLocalFile(f).catch(() => null);
+      if (!file) throw new Error(`"${label(f)}" is not available on this computer. Open the case on the computer with the footage folder.`);
+      if (NATIVE.test(f.name) && f.type === 'video') {
+        sources[fid] = { blob: file, name: label(f) };
+        locate.set(fid, t => ({ sid: fid, from: t }));
+        continue;
+      }
+      // merge nearby ranges, so one conversion covers several clips
+      ranges.sort((a, b) => a[0] - b[0]);
+      const merged = [];
+      for (const [a, b] of ranges) { const last = merged[merged.length - 1]; if (last && a <= last[1] + 20) last[1] = Math.max(last[1], b); else merged.push([a, b]); }
+      const pieces = merged.map(([a, b]) => ({ a: Math.max(0, a - 0.5), b: Math.min(f.duration || b + 1, b + 0.5) }));
+      pieces.forEach(pc => { pc.sid = `${fid}@${Math.round(pc.a * 10)}`; toConvert.push({ f, file, pc }); });
+      locate.set(fid, t => { const pc = pieces.find(x => t >= x.a - 0.01 && t <= x.b + 0.01) || pieces[0]; return { sid: pc.sid, from: Math.max(0, t - pc.a) }; });
+    }
+    if (toConvert.length) {
+      const { convertRange } = await import('./convert.js');
+      const totalSec = toConvert.reduce((x, y) => x + (y.pc.b - y.pc.a), 0);
+      let doneSec = 0;
+      for (const { f, file, pc } of toConvert) {
+        if (cancelledPrep) throw new Error('Export cancelled');
+        const len = pc.b - pc.a;
+        const blob = await convertRange(file, pc.a, len, {
+          video: f.type === 'video',
+          onProgress: p => progress(0.3 * (doneSec + p * len) / totalSec, `Converting the parts of "${label(f)}" that are used (${X.fmtH(doneSec + p * len)} of ${X.fmtH(totalSec)})…`),
+        });
+        sources[pc.sid] = { blob, name: label(f) };
+        doneSec += len;
+      }
+    }
+    if (cancelledPrep) throw new Error('Export cancelled');
+
+    // 2) Narration as 48 kHz mono
+    progress(0.3, 'Reading the narration…');
+    const nb = await X.getFile(narrKey(c));
+    if (!nb) throw new Error('The narration audio is not on this computer or in the cloud. Upload it again.');
+    const ab = await new OfflineAudioContext(1, 1, 48000).decodeAudioData(await nb.arrayBuffer());
+    const pcm = new Float32Array(ab.length);
+    for (let ch = 0; ch < ab.numberOfChannels; ch++) { const d = ab.getChannelData(ch); for (let i = 0; i < d.length; i++) pcm[i] += d[i] / ab.numberOfChannels; }
+    // even out the narration level
+    let sum = 0; for (let i = 0; i < pcm.length; i += 4) sum += pcm[i] * pcm[i];
+    const rms = Math.sqrt(sum / Math.max(1, pcm.length / 4));
+    const narrGain = rms > 1e-4 ? Math.max(0.5, Math.min(4, 0.12 / rms)) : 1;
+
+    // 3) The job for the background engine
+    const where = (f, t) => locate.get(f.id)(t);
+    const segs = plan.segs.map(sg => {
+      let pic = null;
+      if (sg.pic && sg.pic.file) { const w = where(sg.pic.file, sg.pic.from); pic = { sid: w.sid, from: w.from, freeze: !!sg.pic.freeze }; }
+      else if (sg.pic && sg.pic.card) pic = { card: sg.pic.card, sub: sg.pic.sub };
+      const sound = sg.sound.map(s => { const w = where(s.file, s.from); return { sid: w.sid, from: w.from, gain: s.gain }; });
+      return { t0: sg.t0, dur: sg.dur, pic, sound, narr: sg.narr || null };
+    });
+    const job = {
+      aspect, bitrate: aspect === '9:16' ? 10_000_000 : 12_000_000,
+      sources, segs, narration: pcm, narrGain, fileHandle,
+      captions: captionCues(plan, opts.caps || 'footage', aspect),
+    };
+    progress(0.3, 'Building the video…');
+    const res = await new Promise((ok, bad) => {
+      worker = new Worker('/js/story-export-worker.js');
+      worker.onmessage = e => {
+        const d = e.data;
+        if (d.type === 'progress') progress(0.3 + 0.7 * d.frac, d.text);
+        else if (d.type === 'done') ok(d);
+        else if (d.type === 'cancelled') bad(new Error(d.message || 'Export cancelled'));
+        else if (d.type === 'error') bad(new Error(d.message));
+      };
+      worker.onerror = e => bad(new Error(e.message || 'The video engine stopped.'));
+      worker.postMessage({ type: 'start', job }, [pcm.buffer]);
+    });
+    progress(1, 'Done');
+    $('finResult').innerHTML = `<div class="story-note"><strong>Your video is saved</strong> as "${X.esc(fileHandle.name)}" (${X.fmtH(res.duration)} long, built in ${X.fmtH(res.seconds)}).${res.problems.length ? `<br><br><strong>Some parts had problems:</strong><ul>${res.problems.map(p => `<li>${X.esc(p)}</li>`).join('')}</ul>` : ''}</div>`;
+  } catch (e) {
+    $('finResult').innerHTML = `<div class="story-note"><strong>${/cancel/i.test(e.message) ? 'Export cancelled' : 'The export stopped'}</strong>${/cancel/i.test(e.message) ? '' : ': ' + X.esc(e.message)}</div>`;
+  } finally {
+    if (worker) { worker.terminate(); worker = null; }
+    $('finCancel').classList.add('hidden');
+    $('finProgress').classList.add('hidden');
+    renderFinish();
+  }
+}

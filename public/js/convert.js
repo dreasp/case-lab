@@ -98,3 +98,39 @@ export async function convertForAnalysis(file, { onProgress, video = true } = {}
     await f.deleteDir(dir).catch(() => {});
   }
 }
+
+// Makes a full-quality MP4 of one stretch of a file (for the final video). Only that stretch
+// is converted, so even hours-long WMV files are quick. Audio-only files give an M4A.
+export async function convertRange(file, from, dur, { video = true, onProgress } = {}) {
+  const f = await engine();
+  const dir = '/r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  await f.createDir(dir);
+  await f.mount('WORKERFS', { files: [file] }, dir);
+  const input = `${dir}/${file.name}`;
+  let log = '';
+  const onLog = ({ message }) => { log += message + '\n'; };
+  const onProg = ({ time }) => {
+    if (!onProgress) return;
+    const sec = time > dur * 1000 ? time / 1e6 : time;
+    onProgress(Math.max(0, Math.min(0.99, sec / dur)));
+  };
+  f.on('log', onLog);
+  f.on('progress', onProg);
+  const out = video ? 'clip.mp4' : 'clip.m4a';
+  try {
+    const args = ['-hide_banner', '-y', '-ss', from.toFixed(3), '-i', input, '-t', dur.toFixed(3)];
+    if (video) args.push('-map', '0:v:0', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', '30');
+    else args.push('-vn');
+    args.push('-map', '0:a:0?', '-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-ar', '48000', '-movflags', '+faststart', out);
+    const rc = await f.exec(args);
+    if (rc !== 0) throw new Error('Converting part of "' + file.name + '" failed: ' + (log.split('\n').filter(Boolean).slice(-2).join(' ') || 'unknown error'));
+    const blob = await readOut(f, out, video ? 'video/mp4' : 'audio/mp4');
+    if (!blob) throw new Error('Converting part of "' + file.name + '" gave an empty file.');
+    return blob;
+  } finally {
+    f.off('log', onLog);
+    f.off('progress', onProg);
+    await f.unmount(dir).catch(() => {});
+    await f.deleteDir(dir).catch(() => {});
+  }
+}

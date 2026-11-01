@@ -7,6 +7,7 @@ import { cloudStore as store } from './cloud.js';
 import { store as localStore } from './store.js';
 import { caseChecks } from './checks.js';
 import { initStory, renderStory } from './story.js';
+import { initFinish, renderFinish } from './finish.js';
 
 const $ = id => document.getElementById(id);
 const VIDEO_EXT = /\.(mp4|mov|m4v|wmv|avi|mpe?g|mkv|flv|3gp|webm|asf|vob|ts|mts|m2ts)$/i;
@@ -1004,6 +1005,7 @@ function renderViewerList() {
 
 // ---------- wiring ----------
 function wire() {
+  initFinish({ cur: () => cur, save, api, esc, fmtH, fileById, getLocalFile, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), getFile: k => store.getFile(k) });
   initStory({ cur: () => cur, contextText, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, openViewer, speakerMap, refreshUsage, NATIVE_VIDEO });
   $('newCase').addEventListener('click', () => { if (running) return alert('Wait for the analysis to finish or press Stop first.'); showNew(); $('caseTitleInput').focus(); });
   $('caseCreate').addEventListener('click', async () => {
@@ -1031,8 +1033,9 @@ function wire() {
   // tabs
   document.querySelectorAll('#caseTabs .tab').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('#caseTabs .tab').forEach(x => x.classList.toggle('active', x === b));
-    ['files', 'research', 'story', 'context'].forEach(t => $('ctab-' + t).classList.toggle('hidden', b.dataset.tab !== t));
+    ['files', 'research', 'story', 'final', 'context'].forEach(t => $('ctab-' + t).classList.toggle('hidden', b.dataset.tab !== t));
     if (b.dataset.tab === 'story') renderStory();
+    if (b.dataset.tab === 'final') renderFinish();
   }));
 
   $('webResearch').addEventListener('click', webResearch);

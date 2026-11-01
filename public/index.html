@@ -226,6 +226,7 @@
             <button class="tab active" data-tab="files" type="button">Files</button>
             <button class="tab" data-tab="research" type="button">Research</button>
             <button class="tab" data-tab="story" type="button">Story</button>
+            <button class="tab" data-tab="final" type="button">Final video</button>
             <button class="tab" data-tab="context" type="button">Case context</button>
           </div>
 
@@ -289,6 +290,36 @@
               <button id="storyAddNarr" class="btn small ghost" type="button">+ Add narration</button>
               <select id="storyAddClip"><option value="">+ Add a clip from a key moment…</option></select>
             </div>
+          </div>
+
+          <!-- Final video -->
+          <div id="ctab-final" class="hidden">
+            <section class="fin-card">
+              <h3>1. Your narration</h3>
+              <p class="muted small-text">On the Story tab, click "Copy narration" and paste it into ElevenLabs as one script. Download the audio and upload it here: the app finds where each narration part starts and ends (word timing, about 4 cents for 10 minutes). You can listen to each part and nudge its start or end.</p>
+              <div class="case-actions">
+                <label class="btn">Upload narration audio<input id="narrFile" type="file" accept="audio/*,.mp3,.wav,.m4a" hidden></label>
+                <span id="narrInfo" class="muted small-text"></span>
+              </div>
+              <ol id="narrParts" class="narr-parts"></ol>
+              <audio id="narrAudio" class="hidden"></audio>
+            </section>
+            <section class="fin-card">
+              <h3>2. Build the final video</h3>
+              <div class="fin-opts">
+                <label>Format <select id="finAspect"><option value="16:9">16:9 (YouTube video)</option><option value="9:16">9:16 (Shorts)</option></select></label>
+                <label>Captions <select id="finCaps"><option value="off">Off</option><option value="footage">What people say in the footage</option><option value="narr">Your narration</option><option value="both">Both</option></select></label>
+                <label>Footage sound under narration <input id="finDuck" type="range" min="0" max="40" step="5" value="15"> <span id="finDuckVal" class="mono">15%</span></label>
+              </div>
+              <p id="finSummary" class="muted small-text"></p>
+              <p class="muted small-text">Built at full quality from your original files, straight onto your computer. It can take a while for a long video: keep this tab open (you can use other tabs and apps meanwhile).</p>
+              <div class="case-actions">
+                <button id="finExport" class="btn primary" type="button">Export video</button>
+                <button id="finCancel" class="btn ghost hidden" type="button">Cancel</button>
+              </div>
+              <div id="finProgress" class="progress hidden"><div class="progress-bar"><div id="finFill"></div></div><span id="finText"></span></div>
+              <div id="finResult"></div>
+            </section>
           </div>
 
           <!-- Context -->
