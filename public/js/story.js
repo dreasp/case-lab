@@ -202,7 +202,7 @@ async function onLineEdit(e) {
     if (!a || !b) { alert('First click in the text exactly where the other person starts talking, then click "Split here".'); return true; }
     const wa = a.split(/\s+/).length, wb = b.split(/\s+/).length;
     // exact time the other person starts talking (from the word timing), or an estimate
-    const exact = splitTime(u, a, b, await getWords(X.cur(), f));
+    const exact = splitTime(u, a, b, await getWords(X.cur(), f), utt.slice(Math.max(0, i - 3), i), utt.slice(i + 1, i + 4));
     const t = exact != null && exact > u.s && exact < u.e ? exact : u.s + (u.e - u.s) * wa / (wa + wb);
     utt.splice(i + 1, 0, { ...u, s: Math.round(t * 100) / 100, text: b });
     u.e = Math.round(t * 100) / 100; u.text = a;

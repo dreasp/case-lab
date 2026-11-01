@@ -3,7 +3,7 @@
 
 import { alignWords, buildCues, DEFAULT_STYLE } from './captions.js';
 import { mediaUrl, mediaBlob, migrate, slots } from './media.js';
-import { getWords, timeLine } from './words.js';
+import { getWords, timeLines } from './words.js';
 
 let X = null;
 const $ = id => document.getElementById(id);
@@ -295,16 +295,17 @@ async function captionCues(plan, mode, aspect) {
       const names = X.speakerMap(f);
       const timing = await getWords(c, f); // exact word times, so captions match the speech
       const utt = ((f.transcript && f.transcript.utterances) || []).filter(u => u.e > sg.from - 4 && u.s < sg.from + sg.dur + 4);
-      for (const u of utt) {
+      const timed = timeLines(utt, timing); // all lines matched together, in order
+      utt.forEach((u, ui) => {
         const words = [];
-        for (const x of timeLine(u, timing)) {
+        for (const x of timed[ui]) {
           if (x.s >= sg.from - 0.05 && x.e <= sg.from + sg.dur + 0.3) words.push({ w: x.w, p: 0, s: sg.t0 + (x.s - sg.from), e: sg.t0 + Math.min(sg.dur, x.e - sg.from) });
         }
-        if (!words.length) continue;
+        if (!words.length) return;
         const who = names[u.sp] || 'Speaker ' + u.sp;
         // the speaker's name takes room on screen, so lines are a little shorter
         for (const q of buildCues(words, preset).flatMap(q => splitCue(q, preset === 'bold' ? 3 : 9))) { q.who = who; q.color = colorOf(who); all.push(q); }
-      }
+      });
     }
   }
   all.sort((a, b) => a.s - b.s);
