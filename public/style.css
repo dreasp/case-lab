@@ -432,3 +432,9 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .np-status { color: var(--gold); }
 .np-media { align-items: flex-start; }
 .np-media-add { align-self: flex-end; }
+.mute-list { margin: 6px 0 10px; font-size: 13px; color: var(--muted); }
+.mute-list summary { cursor: pointer; }
+.mute-list textarea { margin-top: 8px; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; max-width: 420px; }
+#finMuteHow { background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 13px; }
+.mute-found { max-height: 220px; overflow: auto; margin: 8px 0; }
+#finMuteReport { margin-bottom: 10px; }

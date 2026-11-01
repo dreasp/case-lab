@@ -204,6 +204,20 @@ function fadeEdges(x, sec = 0.03) {
   return x;
 }
 
+// Swear words: silence (or bleep) exact stretches of a sound, with tiny fades so there's no click.
+// ranges are in seconds from the start of this piece of sound.
+function muteWords(x, ranges, how) {
+  const F = Math.round(0.012 * SR);
+  for (const [a, b] of ranges) {
+    const i0 = Math.max(0, Math.round(a * SR)), i1 = Math.min(x.length, Math.round(b * SR));
+    for (let i = i0; i < i1; i++) {
+      const edge = Math.min(1, (i - i0) / F, (i1 - 1 - i) / F); // 0 at the edges, 1 inside
+      const tone = how === 'bleep' ? 0.16 * Math.sin(2 * Math.PI * 1000 * i / SR) : 0; // turned down with the footage under narration
+      x[i] = x[i] * (1 - Math.max(0, edge)) + tone * Math.max(0, edge);
+    }
+  }
+}
+
 // Soft limiter so peaks never clip
 const limit = v => { const a = Math.abs(v); return a <= 0.65 ? v : Math.sign(v) * (0.65 + 0.22 * Math.tanh((a - 0.65) / 0.22)); };
 
@@ -260,6 +274,7 @@ async function run(job) {
         if (src.aErr && !src.aWarned) { problems.push(src.aErr); src.aWarned = true; }
         const at = Math.round((snd.at || 0) * SR);
         const x = fadeEdges(level(await soundOf(src, snd.from, snd.len || sg.dur), 0.1));
+        if (snd.mute) muteWords(x, snd.mute, job.muteHow);
         for (let i = 0; i < x.length && at + i < n; i++) mix[at + i] += x[i] * snd.gain;
       } catch (e) { problems.push(`Sound of "${src.name}" at ${fmtTime(sg.t0)}: ${e.message}`); }
     }

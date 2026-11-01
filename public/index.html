@@ -311,6 +311,17 @@
                 <label>Captions <select id="finCaps"><option value="off">Off</option><option value="footage">What people say in the footage</option><option value="narr">Your narration</option><option value="both">Both</option></select></label>
                 <label>Footage sound under narration <input id="finDuck" type="range" min="0" max="40" step="5" value="15"> <span id="finDuckVal" class="mono">15%</span></label>
               </div>
+              <div class="fin-opts">
+                <label class="trim-mute"><input id="finMute" type="checkbox" checked> Silence swear words</label>
+                <select id="finMuteHow"><option value="silence">by silencing them</option><option value="bleep">with a bleep</option></select>
+                <button id="finMuteCheck" class="btn ghost small" type="button">Check which words will be silenced</button>
+              </div>
+              <details class="mute-list">
+                <summary>Words to silence (your list, used for every case)</summary>
+                <textarea id="finMuteList" rows="6"></textarea>
+                <p class="muted small-text">One per line. A * at the end also catches longer words: fuck* covers fucking, fucked and fuckin'. The same words are masked in the captions, like f******. <button id="finMuteReset" class="btn ghost small" type="button">Back to the standard list</button></p>
+              </details>
+              <div id="finMuteReport"></div>
               <p id="finSummary" class="muted small-text"></p>
               <p class="muted small-text">Built at full quality from your original files, straight onto your computer. It can take a while for a long video: keep this tab open (you can use other tabs and apps meanwhile).</p>
               <div class="case-actions">

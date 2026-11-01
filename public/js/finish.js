@@ -3,7 +3,7 @@
 
 import { alignWords, buildCues, DEFAULT_STYLE } from './captions.js';
 import { mediaUrl, mediaBlob, migrate, slots } from './media.js';
-import { getWords, timeLines } from './words.js';
+import { getWords, timeLines, DEFAULT_MUTE, muteMatcher, maskWord, swearsIn } from './words.js';
 
 let X = null;
 const $ = id => document.getElementById(id);
@@ -28,11 +28,15 @@ export function initFinish(helpers) {
     }
   });
   $('finDuck').addEventListener('input', () => { $('finDuckVal').textContent = $('finDuck').value + '%'; });
-  ['finAspect', 'finCaps', 'finDuck'].forEach(id => $(id).addEventListener('change', async () => {
-    const n = narr(); n.opts = { aspect: $('finAspect').value, caps: $('finCaps').value, duck: +$('finDuck').value };
+  ['finAspect', 'finCaps', 'finDuck', 'finMute', 'finMuteHow'].forEach(id => $(id).addEventListener('change', async () => {
+    const n = narr(); n.opts = { aspect: $('finAspect').value, caps: $('finCaps').value, duck: +$('finDuck').value, mute: $('finMute').checked, muteHow: $('finMuteHow').value };
     await X.save();
   }));
   $('finExport').addEventListener('click', exportVideo);
+  $('finMuteList').value = muteList().join('\n');
+  $('finMuteList').addEventListener('change', () => { try { localStorage.setItem('caselab-mute-list', JSON.stringify($('finMuteList').value.split(/\n+/).map(x => x.trim()).filter(Boolean))); } catch (e) { /* not saved */ } $('finMuteReport').innerHTML = ''; });
+  $('finMuteReset').addEventListener('click', () => { try { localStorage.removeItem('caselab-mute-list'); } catch (e) { /* ignore */ } $('finMuteList').value = DEFAULT_MUTE.join('\n'); $('finMuteReport').innerHTML = ''; });
+  $('finMuteCheck').addEventListener('click', checkSwears);
   wireFinalPreview();
   $('finCancel').addEventListener('click', () => { if (worker) worker.postMessage({ type: 'cancel' }); });
   const a = $('narrAudio');
@@ -161,6 +165,8 @@ export function renderFinish() {
   $('finCaps').value = o.caps || 'footage';
   $('finDuck').value = o.duck != null ? o.duck : 15;
   $('finDuckVal').textContent = $('finDuck').value + '%';
+  $('finMute').checked = o.mute !== false;
+  $('finMuteHow').value = o.muteHow || 'silence';
   const parts = narrParts(c);
   if (!storySegs(c).length) {
     $('narrInfo').textContent = 'Build the story first (Story tab).';
@@ -274,7 +280,7 @@ function splitCue(q, max) {
 }
 
 // ---------- captions ----------
-async function captionCues(plan, mode, aspect) {
+async function captionCues(plan, mode, aspect, isSwear = null) {
   if (mode === 'off') return null;
   const style = { ...DEFAULT_STYLE[aspect] };
   const preset = style.preset;
@@ -299,7 +305,7 @@ async function captionCues(plan, mode, aspect) {
       utt.forEach((u, ui) => {
         const words = [];
         for (const x of timed[ui]) {
-          if (x.s >= sg.from - 0.05 && x.e <= sg.from + sg.dur + 0.3) words.push({ w: x.w, p: 0, s: sg.t0 + (x.s - sg.from), e: sg.t0 + Math.min(sg.dur, x.e - sg.from) });
+          if (x.s >= sg.from - 0.05 && x.e <= sg.from + sg.dur + 0.3) words.push({ w: isSwear && isSwear(x.w) ? maskWord(x.w) : x.w, p: 0, s: sg.t0 + (x.s - sg.from), e: sg.t0 + Math.min(sg.dur, x.e - sg.from) });
         }
         if (!words.length) return;
         const who = names[u.sp] || 'Speaker ' + u.sp;
@@ -311,6 +317,47 @@ async function captionCues(plan, mode, aspect) {
   all.sort((a, b) => a.s - b.s);
   for (let i = 0; i < all.length - 1; i++) if (all[i].e > all[i + 1].s) all[i].e = all[i + 1].s;
   return { cues: all.filter(x => x.e > x.s), style };
+}
+
+// ---------- swear words ----------
+function muteList() {
+  try { const l = JSON.parse(localStorage.getItem('caselab-mute-list') || 'null'); if (Array.isArray(l) && l.length) return l; } catch (e) { /* standard list */ }
+  return DEFAULT_MUTE;
+}
+
+// For every piece of footage sound in the video: the swear words in it, as { a, b } seconds from
+// the start of that piece, plus where they are in the finished video (for the check list)
+async function planSwears(c, plan, isSwear) {
+  const out = [];
+  for (const sg of plan.segs) {
+    const per = [];
+    for (const s of sg.sound) {
+      const f = s.file;
+      if (!f || !f.transcript) { per.push([]); continue; }
+      const words = await getWords(c, f);
+      const found = swearsIn(words, f.transcript.utterances, s.from, s.from + sg.dur, isSwear);
+      per.push(found.map(x => ({ a: Math.max(0, x.s - s.from), b: Math.min(sg.dur, x.e - s.from), w: x.w, at: sg.t0 + Math.max(0, x.s - s.from), file: f, under: sg.kind !== 'clip' })).filter(r => r.b > r.a));
+    }
+    out.push(per);
+  }
+  return out;
+}
+
+async function checkSwears() {
+  const c = X.cur();
+  const m = matchParts(c);
+  if (!m) return alert('Upload your narration first, so the app knows the order and timing of the video.');
+  const box = $('finMuteReport');
+  box.innerHTML = '<div class="story-note muted">Checking every clip…</div>';
+  const plan = buildPlan(c, m);
+  const all = (await planSwears(c, plan, muteMatcher(muteList()))).flat(2).sort((a, b) => a.at - b.at);
+  if (!all.length) { box.innerHTML = '<div class="story-note">No words from your list were found in the footage that is used.</div>'; return; }
+  const counts = {};
+  all.forEach(x => { const k = maskWord(x.w.toLowerCase().replace(/[^a-z']/g, '')); counts[k] = (counts[k] || 0) + 1; });
+  box.innerHTML = `<div class="story-note"><strong>${all.length} word${all.length > 1 ? 's' : ''} will be ${$('finMuteHow').value === 'bleep' ? 'bleeped' : 'silenced'}</strong> (${Object.entries(counts).map(([w, n]) => `${X.esc(w)} ×${n}`).join(', ')}).
+    ${$('finMute').checked ? '' : '<br><strong>"Silence swear words" is switched off</strong>, so right now they would be heard.'}
+    <ul class="mute-found">${all.map(x => `<li><span class="mono">${X.fmtH(x.at)}</span> ${X.esc(maskWord(x.w))} <span class="muted">· ${X.esc(label(x.file))}${x.under ? ' (quietly, under your narration)' : ''}</span></li>`).join('')}</ul>
+    <span class="muted small-text">If one is missed, it was probably transcribed as a different word: fix it with "Edit lines" on the Story tab and it will be caught. To silence other words too, add them to your list.</span></div>`;
 }
 
 // ---------- export ----------
@@ -416,26 +463,29 @@ async function exportVideo() {
 
     // 3) The job for the background engine
     const where = (f, t) => locate.get(f.id)(t);
-    const segs = plan.segs.map(sg => {
+    const mutes = opts.mute !== false ? await planSwears(c, plan, muteMatcher(muteList())) : null;
+    const withMute = (si, list) => list.map((x, k) => (mutes && mutes[si][k] && mutes[si][k].length && x.sid && !String(x.sid).startsWith('own:') ? { ...x, mute: mutes[si][k].map(r => [r.a, r.b]) } : x));
+    const segs = plan.segs.map((sg, si) => {
       if (sg.pic && sg.pic.own) {
         const sl = slots(sg.pic.own, sg.dur);
         const items = sg.pic.own.slice(0, sl.length);
         const pics = items.map((it, k) => ({ t: sl[k].t, dur: sl[k].d, pic: it.kind === 'photo' ? { img: 'own:' + it.id, kb: k % 2 } : { sid: 'own:' + it.id, from: it.from || 0, until: it.len ? (it.from || 0) + it.len : null } }));
         const sound = sg.kind === 'clip'
-          ? sg.sound.map(s => { const w = where(s.file, s.from); return { sid: w.sid, from: w.from, gain: s.gain }; })
+          ? withMute(si, sg.sound.map(s => { const w = where(s.file, s.from); return { sid: w.sid, from: w.from, gain: s.gain }; }))
           : items.map((it, k) => it.kind === 'video' && !it.muted ? { sid: 'own:' + it.id, from: it.from || 0, gain: duckGain, at: sl[k].t, len: it.len ? Math.min(it.len, sl[k].d) : sl[k].d } : null).filter(Boolean);
         return { t0: sg.t0, dur: sg.dur, pic: null, pics, sound, narr: sg.narr || null };
       }
       let pic = null;
       if (sg.pic && sg.pic.file) { const w = where(sg.pic.file, sg.pic.from); pic = { sid: w.sid, from: w.from, freeze: !!sg.pic.freeze }; }
       else if (sg.pic && sg.pic.card) pic = { card: sg.pic.card, sub: sg.pic.sub };
-      const sound = sg.sound.map(s => { const w = where(s.file, s.from); return { sid: w.sid, from: w.from, gain: s.gain }; });
+      const sound = withMute(si, sg.sound.map(s => { const w = where(s.file, s.from); return { sid: w.sid, from: w.from, gain: s.gain }; }));
       return { t0: sg.t0, dur: sg.dur, pic, sound, narr: sg.narr || null };
     });
     const job = {
       aspect, bitrate: aspect === '9:16' ? 10_000_000 : 12_000_000,
       sources, segs, narration: pcm, narrGain, fileHandle,
-      captions: await captionCues(plan, opts.caps || 'footage', aspect),
+      captions: await captionCues(plan, opts.caps || 'footage', aspect, opts.mute !== false ? muteMatcher(muteList()) : null),
+      muteHow: opts.muteHow || 'silence',
     };
     progress(0.3, 'Building the video…');
     const res = await new Promise((ok, bad) => {
@@ -486,10 +536,12 @@ async function previewFinal() {
   if (!m) return alert('Upload your narration first.');
   const opts = (c.narr && c.narr.opts) || {};
   const plan = buildPlan(c, m);
-  const caps = await captionCues(plan, opts.caps || 'footage', '16:9');
+  const isSwear = opts.mute !== false ? muteMatcher(muteList()) : null;
+  const caps = await captionCues(plan, opts.caps || 'footage', '16:9', isSwear);
   let nurl;
   try { nurl = await narrSrc(); } catch (e) { return alert(e.message); }
-  PV = { plan, cues: caps ? caps.cues : [], i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
+  const mutes = isSwear ? await planSwears(c, plan, isSwear) : null;
+  PV = { plan, cues: caps ? caps.cues : [], mutes, i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
   $('fpNarr').src = nurl;
   $('fpTotal').textContent = X.fmtH(plan.total);
   $('fpBar').innerHTML = '<div id="fpFill"></div>' + plan.segs.slice(1).map(sg => `<i style="left:${sg.t0 / plan.total * 100}%"></i>`).join('');
@@ -620,6 +672,15 @@ function tick() {
       const V = $('fpVideo'), A = $('fpAudio');
       if (PV.vidEnd != null && V.currentTime >= PV.vidEnd) { if (!V.paused) V.pause(); }
       else if (PV.audFrom != null && PV.vidFrom != null && !PV.freeze && Math.abs((V.currentTime - PV.vidFrom) - (A.currentTime - PV.audFrom)) > 1.5) V.currentTime = PV.vidFrom + (A.currentTime - PV.audFrom);
+    }
+    // swear words: turn the footage sound off while one is said
+    const ranges = PV.mutes && PV.mutes[PV.i] && PV.mutes[PV.i][0];
+    if (ranges && ranges.length) {
+      const into = T - sg.t0;
+      const quiet = ranges.some(r => into >= r.a && into < r.b);
+      const el = PV.audFrom != null ? $('fpAudio') : (!$('fpVideo').muted ? $('fpVideo') : null);
+      const gain = sg.kind === 'clip' ? 1 : PV.duck;
+      if (el) el.volume = quiet ? 0 : Math.min(1, gain);
     }
     const IMG = $('fpImg');
     if (!IMG.classList.contains('hidden') && PV.ownD) {

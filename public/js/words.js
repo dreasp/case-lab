@@ -65,3 +65,34 @@ export function timeLines(utts, words) {
   const al = alignWords(utts.map(u => String(u.text || '').trim()), near(words, from, to));
   return utts.map((u, i) => al.filter(x => x.p === i).map(x => ({ w: x.w, s: x.s, e: x.e })));
 }
+
+// ---------- swear words ----------
+// One per line in your list; a * at the end also matches longer words (fuck* = fucking, fucked…)
+export const DEFAULT_MUTE = ['fuck*', 'motherfuck*', 'mf', 'shit*', 'bullshit*', 'ass', 'asses', 'asshole*', 'dumbass*', 'jackass*', 'badass*', 'bitch*', 'damn', 'dammit', 'goddamn*', 'goddam*', 'bastard*', 'dick', 'dicks', 'dickhead*', 'pussy', 'pussies', 'cunt*', 'cock', 'cocks', 'nigga*', 'nigger*', 'whore*', 'slut*', 'fag', 'fags', 'faggot*', 'retard*'];
+
+const norm = w => String(w || '').toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9'*]+/g, '').replace(/'s$/, '');
+
+export function muteMatcher(list) {
+  const exact = new Set(), prefix = [];
+  for (const raw of list) { const w = norm(raw); if (!w) continue; if (w.endsWith('*')) prefix.push(w.slice(0, -1).replace(/\*/g, '')); else exact.add(w.replace(/\*/g, '')); }
+  return word => { const w = norm(word).replace(/\*/g, ''); return !!w && (exact.has(w) || prefix.some(p => w.startsWith(p))); };
+}
+
+// Caption text with a swear word masked: "fucking," -> "f******,"
+export const maskWord = w => w.replace(/[A-Za-z][A-Za-z’']*/, m => m[0] + '*'.repeat(Math.max(1, m.length - 1)));
+
+// Every swear word said between a and b (seconds in the file), from the exact word timing
+// and from your edited lines (in case you typed one the transcript missed).
+// Returns [{ s, e, w }] in file time, padded a little so nothing slips through.
+export function swearsIn(words, utts, a, b, isSwear) {
+  const out = [];
+  for (const [s, e, t] of words || []) { if (e < a) continue; if (s > b) break; if (isSwear(t)) out.push({ s, e, w: t }); }
+  const rel = (utts || []).filter(u => u.e > a - 3 && u.s < b + 3);
+  if (rel.length) {
+    for (const line of timeLines(rel, words)) for (const x of line) {
+      if (x.e < a || x.s > b || !isSwear(x.w)) continue;
+      if (!out.some(o => Math.abs(o.s - x.s) < 0.3)) out.push({ s: x.s, e: x.e, w: x.w });
+    }
+  }
+  return out.sort((p, q) => p.s - q.s).map(o => ({ s: o.s - 0.08, e: o.e + 0.06, w: o.w }));
+}
