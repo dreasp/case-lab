@@ -52,7 +52,14 @@ async function uploadNarration(file) {
   $('narrInfo').textContent = 'Reading the audio…';
   let duration = 0;
   try { duration = await audioDuration(file); } catch (e) { return alert('This audio file could not be read. Use MP3, WAV or M4A.'); }
-  await X.putFile(narrKey(c), file);
+  try {
+    const blob = new Blob([await file.arrayBuffer()], { type: file.type || 'audio/mpeg' });
+    await X.putFileSafe(narrKey(c), blob);
+    narrUrl = null;
+  } catch (e) {
+    $('narrInfo').textContent = '';
+    return alert(`The narration could not be saved: ${e.message}. If the file is in a synced folder (OneDrive, Google Drive), make it available offline or copy it to your Desktop, then try again.`);
+  }
   Object.assign(n, { name: file.name, size: file.size, duration, words: null, adj: {}, at: Date.now() });
   await X.save();
   narrUrl = null;

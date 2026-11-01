@@ -5,6 +5,7 @@ let X = null;
 const IMG = /\.(jpe?g|png|webp|gif)$/i;
 const VID = /\.(mp4|mov|m4v)$/i;
 const urlCache = new Map();
+const session = new Map(); // item id -> the file itself, for everything added in this session
 
 export function initMedia(helpers) { X = helpers; }
 
@@ -19,7 +20,14 @@ export async function addFiles(caseId, files) {
     if (!isImg && !isVid) { skipped.push(file.name); continue; }
     const id = newId();
     const key = `${caseId}:m:${id}`;
-    await X.putFile(key, file);
+    // Read the file fully first: files in synced folders (OneDrive, Google Drive...) can't
+    // always be read later, which made some thumbnails show "missing"
+    let blob;
+    try { blob = new Blob([await file.arrayBuffer()], { type: file.type || (isImg ? 'image/jpeg' : 'video/mp4') }); }
+    catch (e) { skipped.push(`${file.name} (could not be read: if it's in a synced folder, make it available offline first)`); continue; }
+    try { await X.putFileSafe(key, blob); }
+    catch (e) { skipped.push(`${file.name} (could not be saved: ${e.message})`); continue; }
+    session.set(id, blob);
     items.push({ id, kind: isImg ? 'photo' : 'video', name: file.name, key });
   }
   return { items, skipped };
@@ -30,7 +38,8 @@ export const casePhotoItem = f => ({ id: newId(), kind: 'photo', name: f.path ||
 export async function mediaUrl(it) {
   if (urlCache.has(it.id)) return urlCache.get(it.id);
   let u = null;
-  if (it.key) { const b = await X.getFile(it.key); if (b) u = URL.createObjectURL(b); }
+  if (session.has(it.id)) u = URL.createObjectURL(session.get(it.id));
+  else if (it.key) { const b = await X.getFile(it.key); if (b) u = URL.createObjectURL(b); }
   else if (it.caseFile) {
     const f = X.fileById(it.caseFile);
     const local = f ? await X.getLocalFile(f).catch(() => null) : null;
@@ -42,6 +51,7 @@ export async function mediaUrl(it) {
 }
 
 export async function mediaBlob(it) {
+  if (session.has(it.id)) return session.get(it.id);
   if (it.key) return X.getFile(it.key);
   const f = X.fileById(it.caseFile);
   if (!f) return null;
@@ -114,8 +124,13 @@ export async function fillThumbs(root, allItems) {
     const it = allItems.find(x => x.id === el.dataset.thumb);
     if (!it || el.dataset.filled) continue;
     el.dataset.filled = '1';
-    const u = await mediaUrl(it).catch(() => null);
-    if (!u) { el.textContent = 'missing'; continue; }
+    let u = null;
+    // a file still on its way to the cloud can take a moment: try a few times
+    for (let k = 0; k < 4 && !u; k++) {
+      u = await mediaUrl(it).catch(() => null);
+      if (!u && k < 3) { el.textContent = 'Loading…'; await new Promise(r => setTimeout(r, 2500)); }
+    }
+    if (!u) { el.innerHTML = '<span class="np-missing">Not found on this computer or in the cloud. Remove it (✕) and add it again.</span>'; continue; }
     el.innerHTML = it.kind === 'video' ? `<video src="${u}#t=0.5" muted preload="metadata"></video><span class="np-vid">▶</span>` : `<img src="${u}" alt="">`;
     // a video shorter than its turn on screen freezes on its last frame: say so
     const v = el.querySelector('video'), slot = +el.dataset.slot;

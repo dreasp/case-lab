@@ -119,6 +119,18 @@ export const cloudStore = {
     if ((await cloudStatus()).projects) await track(() => call(`cloud/projects/${id}`, { method: 'DELETE' })).catch(() => {});
   },
 
+  // Saves a file and makes sure at least one copy really exists (in this browser or the cloud).
+  // Returns where it was saved; throws if neither worked.
+  async putFileSafe(key, blob) {
+    await store.putFile(key, blob);
+    const local = !!(await store.getFile(key));
+    const st = await cloudStatus();
+    if (local) { if (st.files) uploadFile(key, blob).catch(() => {}); return 'local'; }
+    if (!st.files) throw new Error('This browser could not store the file.');
+    await uploadFile(key, blob); // the browser couldn't keep it: wait for the cloud copy
+    return 'cloud';
+  },
+
   // Saves locally right away; the cloud upload continues in the background
   async putFile(key, blob) {
     await store.putFile(key, blob);
@@ -144,9 +156,14 @@ export const cloudStore = {
 };
 
 // Files a project uses: the narration and anything uploaded with "Upload my own"
+// (footage cases: the recorded narration and your photos/videos in story scenes)
 function fileKeys(p) {
   const keys = new Set([p.id + ':audio']);
   for (const s of p.shots || []) if (s.choice && s.choice.custom) keys.add(s.choice.custom);
+  if (p.kind === 'case') {
+    keys.add(`${p.id}:n:narration`);
+    for (const s of (p.story && p.story.segments) || []) for (const m of s.media || []) if (m.key) keys.add(m.key);
+  }
   return [...keys];
 }
 
