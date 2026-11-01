@@ -68,6 +68,18 @@ router.get('/case/transcribe/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Exact timing of every word of a finished transcript (for captions that match the speech).
+// Reading a finished transcript again is free at AssemblyAI.
+router.get('/case/words/:id', async (req, res) => {
+  try {
+    const id = String(req.params.id).replace(/[^\w-]/g, '');
+    const t = await aai('/v2/transcript/' + id);
+    if (t.status !== 'completed') return res.status(400).json({ error: 'This transcript is not available.' });
+    const r2 = x => Math.round(x / 10) / 100;
+    res.json({ words: (t.words || []).map(w => [r2(w.start), r2(w.end), w.text]) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ---------- Gemini: send the analysis copy so the AI can watch it ----------
 const G_BASE = () => (process.env.GEMINI_BASE || 'https://generativelanguage.googleapis.com').replace(/\/$/, '');
 const G_KEY = () => String(process.env.GEMINI_API_KEY || '').trim();

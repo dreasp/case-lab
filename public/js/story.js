@@ -3,6 +3,7 @@
 
 import { addFiles, casePhotoItem, stripHtml, fillThumbs, migrate, openTrim } from './media.js';
 import { partLength } from './finish.js';
+import { getWords, splitTime } from './words.js';
 
 let X = null;               // helpers from footage.js
 const $ = id => document.getElementById(id);
@@ -200,7 +201,9 @@ async function onLineEdit(e) {
     const a = ta.value.slice(0, pos).trim(), b = ta.value.slice(pos).trim();
     if (!a || !b) { alert('First click in the text exactly where the other person starts talking, then click "Split here".'); return true; }
     const wa = a.split(/\s+/).length, wb = b.split(/\s+/).length;
-    const t = u.s + (u.e - u.s) * wa / (wa + wb);
+    // exact time the other person starts talking (from the word timing), or an estimate
+    const exact = splitTime(u, a, b, await getWords(X.cur(), f));
+    const t = exact != null && exact > u.s && exact < u.e ? exact : u.s + (u.e - u.s) * wa / (wa + wb);
     utt.splice(i + 1, 0, { ...u, s: Math.round(t * 100) / 100, text: b });
     u.e = Math.round(t * 100) / 100; u.text = a;
   } else if (e.type === 'click' && act === 'del') {

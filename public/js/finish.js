@@ -3,6 +3,7 @@
 
 import { alignWords, buildCues, DEFAULT_STYLE } from './captions.js';
 import { mediaUrl, mediaBlob, migrate, slots } from './media.js';
+import { getWords, timeLine } from './words.js';
 
 let X = null;
 const $ = id => document.getElementById(id);
@@ -273,7 +274,7 @@ function splitCue(q, max) {
 }
 
 // ---------- captions ----------
-function captionCues(plan, mode, aspect) {
+async function captionCues(plan, mode, aspect) {
   if (mode === 'off') return null;
   const style = { ...DEFAULT_STYLE[aspect] };
   const preset = style.preset;
@@ -288,19 +289,17 @@ function captionCues(plan, mode, aspect) {
   if (mode === 'footage' || mode === 'both') {
     const colors = new Map(); // speaker name -> color, in the order they are first heard
     const colorOf = who => { if (!colors.has(who)) colors.set(who, SPEAKER_COLORS[colors.size % SPEAKER_COLORS.length]); return colors.get(who); };
+    const c = X.cur();
     for (const sg of plan.segs.filter(x => x.kind === 'clip')) {
       const f = sg.file;
       const names = X.speakerMap(f);
-      const utt = ((f.transcript && f.transcript.utterances) || []).filter(u => u.e > sg.from && u.s < sg.from + sg.dur);
+      const timing = await getWords(c, f); // exact word times, so captions match the speech
+      const utt = ((f.transcript && f.transcript.utterances) || []).filter(u => u.e > sg.from - 4 && u.s < sg.from + sg.dur + 4);
       for (const u of utt) {
-        const ws = String(u.text || '').split(/\s+/).filter(Boolean);
-        if (!ws.length) continue;
-        const step = (u.e - u.s) / ws.length;
         const words = [];
-        ws.forEach((w, k) => {
-          const s = u.s + step * k, e = s + step;
-          if (s >= sg.from - 0.05 && e <= sg.from + sg.dur + 0.3) words.push({ w, p: 0, s: sg.t0 + (s - sg.from), e: sg.t0 + Math.min(sg.dur, e - sg.from) });
-        });
+        for (const x of timeLine(u, timing)) {
+          if (x.s >= sg.from - 0.05 && x.e <= sg.from + sg.dur + 0.3) words.push({ w: x.w, p: 0, s: sg.t0 + (x.s - sg.from), e: sg.t0 + Math.min(sg.dur, x.e - sg.from) });
+        }
         if (!words.length) continue;
         const who = names[u.sp] || 'Speaker ' + u.sp;
         // the speaker's name takes room on screen, so lines are a little shorter
@@ -435,7 +434,7 @@ async function exportVideo() {
     const job = {
       aspect, bitrate: aspect === '9:16' ? 10_000_000 : 12_000_000,
       sources, segs, narration: pcm, narrGain, fileHandle,
-      captions: captionCues(plan, opts.caps || 'footage', aspect),
+      captions: await captionCues(plan, opts.caps || 'footage', aspect),
     };
     progress(0.3, 'Building the video…');
     const res = await new Promise((ok, bad) => {
@@ -486,7 +485,7 @@ async function previewFinal() {
   if (!m) return alert('Upload your narration first.');
   const opts = (c.narr && c.narr.opts) || {};
   const plan = buildPlan(c, m);
-  const caps = captionCues(plan, opts.caps || 'footage', '16:9');
+  const caps = await captionCues(plan, opts.caps || 'footage', '16:9');
   let nurl;
   try { nurl = await narrSrc(); } catch (e) { return alert(e.message); }
   PV = { plan, cues: caps ? caps.cues : [], i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
