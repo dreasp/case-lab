@@ -293,10 +293,35 @@
 
           <!-- Context -->
           <div id="ctab-context" class="hidden">
-            <p class="muted">The AI uses this to recognize people and spell names correctly, in transcripts too. Changes apply to files analyzed afterwards.</p>
-            <textarea id="caseContext" rows="14"></textarea>
-            <button id="saveContext" class="btn primary" type="button">Save context</button>
-            <span id="contextSaved" class="muted small-text"></span>
+            <p class="muted">Everything here is given to the AI when it analyzes files, builds the research and writes the narration. Fill it in before "Analyze all": it is the best way to avoid mix-ups and redoing work. Write names exactly as they should be spelled.</p>
+            <div class="ctx-grid">
+              <label class="ctx-field"><span>Who's who</span>
+                <textarea id="ctxWho" rows="5" placeholder="John Doe: suspect, the victim's husband&#10;Jane Doe: the victim, 34&#10;Mary Smith (also spelled Mari): Jane's sister, called 911&#10;Detective Brown: lead detective, county sheriff's office"></textarea></label>
+              <label class="ctx-field"><span>Which file is which</span>
+                <textarea id="ctxFiles" rows="5" placeholder="Axon_Body_1: bodycam of the first officer on scene&#10;Interview_Rm_2: John's interview room&#10;Interview_Rm_1: Mary's interview room, John is never in it&#10;Interview_Rm_1_Pip: same room as Interview_Rm_1, second angle"></textarea></label>
+              <label class="ctx-field"><span>Dates and times</span>
+                <textarea id="ctxDates" rows="4" placeholder="Incident: March 3, 2024, about 22:15, Tampa, Florida&#10;911 call: March 3, 2024, 22:20 (not the date in the file name)"></textarea></label>
+              <label class="ctx-field"><span>Outcome</span>
+                <textarea id="ctxOutcome" rows="4" placeholder="Charges, plea or verdict, sentence and dates, as far as you know them&#10;e.g. Charged with second-degree murder, found guilty June 2025, sentenced to life"></textarea></label>
+            </div>
+            <label class="ctx-field"><span>Other notes</span>
+              <textarea id="caseContext" rows="4" placeholder="Anything else: spellings, things not to mention, background you already know"></textarea></label>
+            <div class="case-actions">
+              <button id="saveContext" class="btn primary" type="button">Save context</button>
+              <span id="contextSaved" class="muted small-text"></span>
+            </div>
+
+            <section class="web-research">
+              <div class="case-actions">
+                <div><h3>Online research</h3>
+                  <p class="muted small-text">The app searches news and court sources for this case: the victim, the suspect, what happened and how it ended. About a cent. Check it against the sources, then fix anything that's wrong right here.</p></div>
+                <div class="grow"></div>
+                <button id="webResearch" class="btn" type="button">Research the case online</button>
+              </div>
+              <p id="webStatus" class="muted small-text"></p>
+              <textarea id="webText" rows="14" class="hidden" placeholder="What the app found online"></textarea>
+              <div id="webSources" class="web-sources"></div>
+            </section>
           </div>
         </div>
       </section>

@@ -105,7 +105,7 @@ async function renderCase() {
   $('caseTitle').textContent = cur.title;
   $('caseTitle').classList.remove('hidden');
   $('caseTitleEdit').classList.add('hidden');
-  $('caseContext').value = cur.context || '';
+  renderContext();
   $('folderName').textContent = cur.folderName ? `Folder: ${cur.folderName}` : '';
   renderMeta();
   renderResearch();
@@ -381,7 +381,7 @@ async function onCheckClick(e) {
     cur.checksIgnored = [...new Set([...(cur.checksIgnored || []), key])];
   } else if (step.type === 'context') {
     cur.context = ((cur.context || '').trimEnd() + '\n' + step.line).trim();
-    $('caseContext').value = cur.context;
+    renderContext();
     document.querySelector('#caseTabs .tab[data-tab="context"]').click();
     const ta = $('caseContext');
     ta.focus();
@@ -396,10 +396,86 @@ async function onCheckClick(e) {
 let renderTimer = null;
 function renderSoon() { clearTimeout(renderTimer); renderTimer = setTimeout(renderFiles, 300); }
 
+// ---------- case context ----------
+const CTX = [['who', 'ctxWho', "WHO'S WHO"], ['files', 'ctxFiles', 'WHICH FILE IS WHICH'], ['dates', 'ctxDates', 'DATES AND TIMES'], ['outcome', 'ctxOutcome', 'OUTCOME']];
+// Everything the creator wrote (and, unless web is false, the online research), as one text for the AI
+function contextText(c, web = true) {
+  const k = c.ctx || {};
+  const parts = CTX.filter(([key]) => (k[key] || '').trim()).map(([key, , head]) => `${head}:\n${k[key].trim()}`);
+  if ((c.context || '').trim()) parts.push(`OTHER NOTES:\n${c.context.trim()}`);
+  if (web && (c.webText || '').trim()) parts.push(`ONLINE RESEARCH (found in news and court sources; the creator's notes above win if they disagree):\n${c.webText.trim()}`);
+  return parts.join('\n\n');
+}
+const ownContextLength = c => contextText(c, false).length;
+
+function renderContext() {
+  const k = cur.ctx || {};
+  for (const [key, id] of CTX) $(id).value = k[key] || '';
+  $('caseContext').value = cur.context || '';
+  $('webText').value = cur.webText || '';
+  $('webText').classList.toggle('hidden', !cur.webText);
+  $('webResearch').textContent = cur.webText ? 'Research again' : 'Research the case online';
+  $('webStatus').textContent = cur.webAt ? `Researched on ${new Date(cur.webAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}. Your edits to this text are saved and used.` : '';
+  $('webSources').innerHTML = (cur.webSources || []).length ? `<strong class="small-text">Sources</strong><ol>${cur.webSources.map(x => `<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a></li>`).join('')}</ol>` : '';
+}
+
+async function saveContext() {
+  cur.ctx = cur.ctx || {};
+  for (const [key, id] of CTX) cur.ctx[key] = $(id).value;
+  cur.context = $('caseContext').value;
+  if (!$('webText').classList.contains('hidden')) cur.webText = $('webText').value;
+  await save();
+}
+
+function webToText(r) {
+  const L = [];
+  const line = (label, v) => { if (v && String(v).trim()) L.push(`${label}: ${String(v).trim()}`); };
+  line('Case', r.case_name);
+  line('Location', r.location);
+  line('What happened', r.summary);
+  const v = r.victim || {};
+  if (v.name || v.about) L.push(`Victim: ${[v.name, v.age && `age ${v.age}`].filter(Boolean).join(', ')}${v.about ? '. ' + v.about : ''}`);
+  const sp = r.suspect || {};
+  if (sp.name || sp.background) L.push(`Suspect: ${[sp.name, sp.age && `age ${sp.age}`].filter(Boolean).join(', ')}${sp.background ? '. ' + sp.background : ''}`);
+  if ((r.people || []).length) L.push('People:\n' + r.people.map(x => `- ${x.name}: ${x.role}`).join('\n'));
+  if ((r.timeline || []).length) L.push('Timeline:\n' + r.timeline.map(x => `- ${x.date}: ${x.what}`).join('\n'));
+  const o = r.outcome || {};
+  const ol = [['Charges', o.charges], ['Plea or verdict', o.plea_or_verdict], ['Sentence', o.sentence], ['Status', o.status], ['Court dates', o.dates]].filter(x => x[1] && String(x[1]).trim());
+  if (ol.length) L.push('Outcome:\n' + ol.map(([a, b]) => `- ${a}: ${b}`).join('\n'));
+  if ((r.uncertain || []).length) L.push('Not confirmed or sources disagree:\n' + r.uncertain.map(x => `- ${x}`).join('\n'));
+  return L.join('\n\n').replace(/\s*—\s*/g, ', ');
+}
+
+async function webResearch() {
+  await saveContext();
+  if (cur.webText && !confirm('Research again? This replaces the online research text below, including any changes you made to it.')) return;
+  const btn = $('webResearch');
+  btn.disabled = true;
+  $('webStatus').textContent = 'Searching news and court sources… this takes about 30 seconds.';
+  try {
+    const r = await api('case/web-research', { title: cur.title, notes: contextText(cur, false) });
+    const res = r.result || {};
+    if (res.found === false || !String(res.summary || '').trim()) {
+      $('webStatus').textContent = 'The app could not find this case online. Add more details above (full names, city, state, date) and try again.';
+      return;
+    }
+    cur.webText = webToText(res);
+    cur.webSources = r.sources || [];
+    cur.webAt = Date.now();
+    await save();
+    refreshUsage();
+    renderContext();
+  } catch (e) {
+    $('webStatus').textContent = 'Could not research the case: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---------- analysis ----------
 function caseTerms() {
   const terms = new Set();
-  for (const line of String(cur.context || '').split(/\r?\n/)) {
+  for (const line of contextText(cur, false).split(/\r?\n/)) {
     const head = line.split(/[:(–—]| - /)[0];
     for (const part of head.split(/,|\band\b|&/)) { const t = part.trim().replace(/^[-*•\d.)\s]+/, ''); if (t && t.split(/\s+/).length <= 5 && /[A-Za-z]/.test(t)) terms.add(t); }
     for (const m of line.matchAll(/\b([A-Z][a-zA-Z'’-]+(?:\s+[A-Z][a-zA-Z'’-]+){0,3})\b/g)) terms.add(m[1]);
@@ -591,7 +667,7 @@ async function watchPart(f, utterances, from, to) {
   try {
     const r = await api('case/analyze-video', {
       uri: f.gfile.uri, mime: f.gfile.mime, fileName: f.name, duration: f.duration, title: cur.title,
-      context: cur.context, utterances, from, to,
+      context: contextText(cur), utterances, from, to,
     });
     return r.result;
   } catch (e) {
@@ -647,11 +723,11 @@ async function ensureAnalysis(f) {
   if (f.type === 'document') {
     await ensureGeminiFile(f);
     setStatus(f, 'reading_doc');
-    const r = await api('case/analyze-document', { uri: f.gfile.uri, fileName: f.path || f.name, title: cur.title, context: cur.context });
+    const r = await api('case/analyze-document', { uri: f.gfile.uri, fileName: f.path || f.name, title: cur.title, context: contextText(cur) });
     f.analysis = r.result;
   } else if (f.type === 'audio') {
     setStatus(f, 'watching');
-    const r = await api('case/analyze-audio', { title: cur.title, fileName: f.name, duration: f.duration, context: cur.context, utterances });
+    const r = await api('case/analyze-audio', { title: cur.title, fileName: f.name, duration: f.duration, context: contextText(cur), utterances });
     f.analysis = mergeParts([r.result]);
   } else {
     await ensureGeminiFile(f);
@@ -697,7 +773,7 @@ async function describePhotos() {
     const batch = todo.slice(i, i + 16);
     batch.forEach(f => setStatus(f, 'describing'));
     try {
-      const r = await api('case/photos', { title: cur.title, context: cur.context, photos: batch.map(f => ({ id: f.id, key: f.copyKey, name: f.path || f.name })) });
+      const r = await api('case/photos', { title: cur.title, context: contextText(cur), photos: batch.map(f => ({ id: f.id, key: f.copyKey, name: f.path || f.name })) });
       for (const f of batch) {
         const d = r.results.find(x => String(x.id) === f.id);
         if (d) { f.photo = d; f.status = 'done'; f.error = null; } else { f.status = 'error'; f.error = 'The AI skipped this photo; try again.'; }
@@ -720,6 +796,11 @@ async function analyzeAll() {
   }
   const todo = cur.files.filter(f => f.status !== 'done' || (f.type === 'photo' && !f.photo));
   if (!todo.length) return alert('Every file is already analyzed. Open the Research tab to build the case document.');
+  if (ownContextLength(cur) < 150 && confirm('The Case context is almost empty.\n\nThe AI does much better (and you avoid paying to redo files) when it knows who is who, which file is whose, the real dates and the outcome.\n\nClick OK to fill in the Case context first (recommended), or Cancel to analyze anyway.')) {
+    document.querySelector('#caseTabs .tab[data-tab="context"]').click();
+    $('ctxWho').focus();
+    return;
+  }
   const hours = todo.filter(f => f.type === 'video' || f.type === 'audio').reduce((n, f) => n + (f.duration || 0), 0) / 3600;
   const unknownLen = todo.some(f => (f.type === 'video' || f.type === 'audio') && !f.duration);
   if (!confirm(`Analyze ${todo.length} file(s)?\n\nEstimated AI cost: ${unknownLen ? 'about $0.30 to $0.45 per hour of footage' : '$' + (hours * 0.45).toFixed(2) + ' or less'}, plus less than a cent per photo or document.\n\nYou can keep working in other tabs, but keep this tab open. Progress is saved as it goes.`)) return;
@@ -773,7 +854,7 @@ async function buildMaster() {
   if (files.map(snapQuotes).some(Boolean)) await save();
   try {
     const r = await api('case/master', {
-      title: cur.title, context: cur.context,
+      title: cur.title, context: contextText(cur),
       files: files.map(f => f.type === 'document' ? ({
         id: f.id, name: f.path || f.name, type: 'document', docType: f.analysis.doc_type, date: f.analysis.date,
         summary: f.analysis.summary, facts: f.analysis.key_facts, events: f.analysis.timeline, quotes: f.analysis.quotes, uncertain: f.analysis.uncertain,
@@ -923,7 +1004,7 @@ function renderViewerList() {
 
 // ---------- wiring ----------
 function wire() {
-  initStory({ cur: () => cur, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, openViewer, speakerMap, refreshUsage, NATIVE_VIDEO });
+  initStory({ cur: () => cur, contextText, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, openViewer, speakerMap, refreshUsage, NATIVE_VIDEO });
   $('newCase').addEventListener('click', () => { if (running) return alert('Wait for the analysis to finish or press Stop first.'); showNew(); $('caseTitleInput').focus(); });
   $('caseCreate').addEventListener('click', async () => {
     const title = $('caseTitleInput').value.trim();
@@ -954,9 +1035,10 @@ function wire() {
     if (b.dataset.tab === 'story') renderStory();
   }));
 
+  $('webResearch').addEventListener('click', webResearch);
+  ['ctxWho', 'ctxFiles', 'ctxDates', 'ctxOutcome', 'caseContext', 'webText'].forEach(id => $(id).addEventListener('change', saveContext));
   $('saveContext').addEventListener('click', async () => {
-    cur.context = $('caseContext').value;
-    await save();
+    await saveContext();
     $('contextSaved').textContent = 'Saved';
     setTimeout(() => { $('contextSaved').textContent = ''; }, 2000);
   });

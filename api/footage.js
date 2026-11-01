@@ -172,7 +172,7 @@ router.post('/case/analyze-video', async (req, res) => {
 
 CASE: ${title || ''}
 CASE CONTEXT (names, roles, known facts, written by the researcher):
-"""${String(context || '').slice(0, 8000)}"""
+"""${String(context || '').slice(0, 24000)}"""
 
 FILE: ${fileName} (${fmtT(duration)} long). You are watching one part of it: ${fmtT(len)} long.
 TIMES: count every time from the start of THIS PART, which is 0:00 and ends at ${fmtT(len)}. The transcript below uses the same times. Write every time as a string like "4:05" (minutes:seconds), never as a number of seconds.
@@ -215,7 +215,7 @@ router.post('/case/analyze-audio', async (req, res) => {
 
 CASE: ${title || ''}
 CASE CONTEXT:
-"""${String(context || '').slice(0, 8000)}"""
+"""${String(context || '').slice(0, 24000)}"""
 
 FILE: ${fileName} (audio only, ${fmtT(duration)} long). Write every time as a string like "4:05" (minutes:seconds), copied from the transcript labels, never as a number of seconds.
 Speaker-labeled transcript:
@@ -243,7 +243,7 @@ router.post('/case/analyze-document', async (req, res) => {
 
 CASE: ${title || ''}
 CASE CONTEXT:
-"""${String(context || '').slice(0, 8000)}"""
+"""${String(context || '').slice(0, 24000)}"""
 
 DOCUMENT: ${fileName}. Read every page (including scanned or handwritten pages). Return JSON:
 {
@@ -271,7 +271,7 @@ router.post('/case/photos', async (req, res) => {
 
 CASE: ${title || ''}
 CASE CONTEXT:
-"""${String(context || '').slice(0, 6000)}"""
+"""${String(context || '').slice(0, 24000)}"""
 
 Describe each numbered photo from this case file. Return a JSON array, one object per photo:
 { "id": photo id, "description": 1-2 factual sentences, "shows": "scene" | "evidence" | "person" | "document" | "vehicle" | "map" | "other", "people": names from the case context only if clearly identifiable (else []), "text": important readable text or "", "sensitive": true if graphic (injuries, bodies), shows a minor, or personal data, "usefulness": 1-5 for a YouTube video (5 = very useful, 1 = not usable) }` }];
@@ -312,7 +312,7 @@ Uncertain: ${(f.uncertain || []).join('; ')}`).join('\n\n').slice(0, 300000);
 
 CASE: ${title || ''}
 CASE CONTEXT:
-"""${String(context || '').slice(0, 10000)}"""
+"""${String(context || '').slice(0, 24000)}"""
 
 Below is the analysis of every file in this case (videos, audio recordings, documents such as police reports) and the photo descriptions. Documents give dates, names and facts; use them to place the footage in time and to name people correctly. For document files, use "t": 0.
 Put everything together into one research document. Order events by when they really happened, using the on-screen clocks, what is said and the case context. When files overlap in time (several officers' bodycams, or two camera angles of the same room), merge them and don't repeat the same event twice.
@@ -346,6 +346,9 @@ const STORY_STYLE = `NARRATION STYLE (the channel's own standards):
 - Written to be read aloud: full, flowing sentences, not fragments. Plain, warm, serious tone.
 - Never use em dashes. Use commas or full stops instead.
 - Each narration part sets up the next clip: who we are about to see, where, and why it matters. Don't retell what the viewer is about to watch.
+- Use the creator's notes (OUTCOME especially) and the ONLINE RESEARCH in the case context for background: who the victim was, how the case ended (charges, plea or verdict, sentence, dates). Only state facts found there or in the footage, and prefer the creator's notes when they disagree.
+- Remember the victim as a person somewhere in the video, using only what the case context says about them.
+- Near the end, tell viewers how the case ended, using the outcome from the case context.
 - Vary the ending reflection from case to case. The very last narration part ends with exactly: "Until next time, stay safe, stay aware, and stay curious. I'll see you in the next video. Bye!"`;
 
 router.post('/case/story', async (req, res) => {
@@ -364,7 +367,7 @@ You are the editor of a long-form true crime YouTube video built mostly from rea
 
 CASE: ${title || ''}
 CASE CONTEXT (written by the creator, trust it over the footage analysis):
-"""${String(context || '').slice(0, 10000)}"""
+"""${String(context || '').slice(0, 24000)}"""
 
 ${STORY_STYLE}
 ${style ? `\nEXTRA STYLE NOTES FROM THE CREATOR:\n"""${String(style).slice(0, 3000)}"""\n` : ''}
@@ -412,6 +415,42 @@ Return JSON:
       segments.push({ type: 'clip', file: f.id, start, end, label: String(sgm.label || ''), why: String(sgm.why || '') });
     }
     res.json({ result: { title_ideas: (out && out.title_ideas) || [], notes: (out && out.notes) || [], segments } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------- Online research: what news and court sources say about the case ----------
+router.post('/case/web-research', async (req, res) => {
+  try {
+    const { title, notes } = req.body || {};
+    const prompt = `You are a careful true crime researcher. Use Google Search to research this real case. Prefer reliable sources: court records, police statements, established local and national news. Ignore forums, social media and speculation.
+
+CASE: ${title || ''}
+WHAT THE CREATOR ALREADY KNOWS (use it to find the right case; it may be incomplete):
+"""${String(notes || '').slice(0, 12000)}"""
+
+Rules:
+- Only include facts you found in sources. If sources disagree, say so in "uncertain". Never guess.
+- Use people's full names as reported. Say "alleged" for anything not proven in court.
+- About the victim, keep it respectful: who they were, not graphic details.
+- Write dates with the month spelled out (e.g. January 25, 2025). Never use em dashes.
+
+Reply with ONLY a JSON object, no other text:
+{
+  "found": true or false (did you find this specific case?),
+  "case_name": how the case is known,
+  "location": city, county, state,
+  "summary": one paragraph on what happened,
+  "victim": { "name": "", "age": "", "about": "who they were, in 1 to 3 respectful sentences" },
+  "suspect": { "name": "", "age": "", "background": "relevant background from sources" },
+  "people": [ { "name": "", "role": "" } ],
+  "timeline": [ { "date": "", "what": "" } ],
+  "outcome": { "charges": "", "plea_or_verdict": "", "sentence": "", "status": "e.g. sentenced, awaiting trial, case closed", "dates": "key court dates" },
+  "uncertain": [ things sources disagree on or that are not confirmed ]
+}`;
+    const out = await generateJSON([{ text: prompt }], { temperature: 0.2, search: true });
+    const sources = (out && out._sources) || [];
+    if (out) delete out._sources;
+    res.json({ result: out, sources });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

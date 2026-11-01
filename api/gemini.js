@@ -30,17 +30,21 @@ class GeminiError extends Error {
   constructor(message, code) { super(message); this.code = code; }
 }
 
-async function generateJSON(parts, { temperature = 0.3, images = false } = {}) {
+// search: true lets the AI look things up on Google; the sources come back in result._sources
+async function generateJSON(parts, { temperature = 0.3, images = false, search = false } = {}) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new GeminiError('GEMINI_API_KEY is not set on the server.', 'SETUP');
   const base = process.env.GEMINI_BASE || 'https://generativelanguage.googleapis.com';
   const url = `${base}/v1beta/models/${MODEL()}:generateContent`;
-  const generationConfig = { temperature, responseMimeType: 'application/json', maxOutputTokens: 65536 };
+  const generationConfig = { temperature, maxOutputTokens: 65536 };
+  // Google Search can't be combined with forced JSON output, so the JSON is read from the text then
+  if (!search) generationConfig.responseMimeType = 'application/json';
   // Flash doesn't need to "think" for this, which saves tokens and avoids empty answers
   if (/flash/i.test(MODEL())) generationConfig.thinkingConfig = { thinkingBudget: 0 };
   // Small previews are enough to judge a shot and use far fewer tokens
   if (images) generationConfig.mediaResolution = 'MEDIA_RESOLUTION_LOW';
   const body = { contents: [{ role: 'user', parts }], generationConfig, safetySettings: SAFETY };
+  if (search) body.tools = [{ google_search: {} }];
 
   return queued(async () => {
     const waits = [15000, 30000, 60000];
@@ -61,7 +65,14 @@ async function generateJSON(parts, { temperature = 0.3, images = false } = {}) {
         }
         await usage.record(MODEL(), data.usageMetadata).catch(() => {});
         try {
-          return parseJSON(text, cand && cand.finishReason);
+          const parsed = parseJSON(text.replace(/^```(?:json)?\s*|\s*```\s*$/g, ''), cand && cand.finishReason);
+          if (search && parsed && typeof parsed === 'object') {
+            const seen = new Set();
+            parsed._sources = ((cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || [])
+              .map(c => c.web).filter(w => w && w.uri && !seen.has(w.title + w.uri) && seen.add(w.title + w.uri))
+              .map(w => ({ title: w.title || w.uri, url: w.uri }));
+          }
+          return parsed;
         } catch (e) {
           console.warn(`Gemini answer unreadable (finish: ${cand && cand.finishReason}, ${text.length} chars): ${text.slice(0, 200)} ... ${text.slice(-200)}`);
           // The same request usually gives the same broken answer; one retry with more variety
@@ -92,6 +103,9 @@ function parseJSON(text, finishReason) {
   try { return JSON.parse(text); } catch (e) { /* try harder below */ }
   const start = text.search(/[\[{]/);
   const body = start >= 0 ? text.slice(start) : text;
+  // an answer with words around the JSON (web search answers sometimes have them)
+  const end = text.lastIndexOf(text[start] === '[' ? ']' : '}');
+  if (start >= 0 && end > start) { try { return JSON.parse(text.slice(start, end + 1)); } catch (e) { /* keep trying */ } }
   try { const v = JSON.parse(jsonrepair(body)); if (v && typeof v === 'object') return v; } catch (e) { /* give up below */ }
   throw new GeminiError(finishReason === 'MAX_TOKENS'
     ? 'The AI answer was too long and got cut off. Try again; long files are analyzed in smaller parts.'

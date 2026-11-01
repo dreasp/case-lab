@@ -3,7 +3,7 @@
 One app for two jobs:
 
 1. **B-roll builder** (live): upload your ElevenLabs narration (AAF) and the Word script. The app splits it into sentences, asks Gemini for literal, non-violent search terms, searches Pixabay and Wikimedia Commons, lets Gemini look at the thumbnails and pick the best match, then exports a finished 1080p video in your browser.
-2. **Footage analysis**: point it at a case folder on your computer (videos incl. WMV/AVI/MPG via the built-in converter, audio recordings, photos, PDF documents). It makes small analysis copies (1 frame per second + the original sound), gets a speaker-labeled transcript from AssemblyAI, has Gemini watch every video, describes the photos, and builds one chronological case research document. Originals never leave your computer. Next: story builder and final video.
+2. **Footage analysis**: point it at a case folder on your computer (videos incl. WMV/AVI/MPG via the built-in converter, audio recordings, photos, PDF documents). It makes small analysis copies (1 frame per second + the original sound), gets a speaker-labeled transcript from AssemblyAI, has Gemini watch every video, describes the photos, and builds one chronological case research document. Case context has sections for who's who, which file is which, dates and the outcome, plus online research (Gemini with Google Search, with sources). Built-in checks flag duplicate camera angles, file-name dates and one person in two places. The Story tab drafts a rough cut (clips in story order with narration in the channel's style) to edit, preview and export as a script. Originals never leave your computer. Next: recorded narration and final video.
 
 ## How it runs
 
@@ -57,4 +57,6 @@ Then open http://localhost:3000. Put the settings in a `.env` file (see `.env.ex
 - `public/js/export-worker.js`: full-quality background export
 - `public/js/footage.js`: the Footage analysis screens
 - `public/js/proxy-worker.js`: makes the small analysis copies of videos in the background
+- `public/js/checks.js`: case checks (no AI)
+- `public/js/story.js`: the Story tab (rough cut, editing, preview, script)
 - `public/js/convert.js`: in-browser ffmpeg for formats Chrome can't read (WMV, AVI, WMA...)

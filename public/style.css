@@ -340,3 +340,16 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .sp-bar div { height: 100%; width: 0; background: var(--gold); }
 .sp-voice { display: flex; gap: 6px; align-items: center; }
 @media (max-width: 700px) { .seg { grid-template-columns: 1fr; } .seg-handle { display: none; } .seg-side { flex-direction: row; align-items: center; } }
+/* Case context sections */
+.ctx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.ctx-field { display: grid; gap: 6px; margin-top: 10px; }
+.ctx-field > span { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.ctx-grid .ctx-field { margin-top: 0; }
+#ctab-context textarea { margin: 0; }
+.web-research { margin-top: 22px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+.web-research h3 { margin: 0 0 4px; }
+.web-research textarea { margin-top: 10px !important; }
+.web-sources { margin-top: 10px; font-size: 12px; }
+.web-sources ol { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 3px; }
+.web-sources a { color: var(--gold); }
+@media (max-width: 800px) { .ctx-grid { grid-template-columns: 1fr; } }
