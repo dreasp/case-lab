@@ -400,3 +400,17 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .seg-vis { margin-top: 8px; font-size: 13px; }
 .seg-vis summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 .seg-vis[open] summary { margin-bottom: 4px; }
+.np-length { width: 100%; color: var(--gold); }
+.np-thumb-cap { color: var(--muted); font-size: 11px; line-height: 1.3; }
+.np-thumb-cap.np-warn { color: var(--accent); }
+.np-media .np-thumb { width: 130px; }
+/* Fixing who said what */
+.tl-toggle { margin-top: 6px; }
+.tl-edit { margin-top: 8px; display: grid; gap: 6px; }
+.tl-help { line-height: 1.4; }
+.tl-line { display: grid; grid-template-columns: 58px 170px 1fr auto; gap: 8px; align-items: start; }
+.tl-line select { background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 5px 6px; font: inherit; font-size: 12px; }
+.tl-line textarea { font-size: 13px; padding: 6px 8px; }
+.tl-btns { display: flex; gap: 4px; }
+.tl-btns .btn { padding: 4px 8px; font-size: 11px; }
+@media (max-width: 800px) { .tl-line { grid-template-columns: 1fr; } }

@@ -52,11 +52,30 @@ export async function mediaBlob(it) {
 }
 
 // The thumbnails + add buttons. `scope` identifies the scene (its story segment id).
-export function stripHtml(items, scope, casePhotos, hint) {
+const secs = t => t >= 60 ? `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, '0')}` : `${Math.round(t)} seconds`;
+export const PHOTO_SECS = 5; // a comfortable time for one photo on screen
+
+// How many photos/videos a scene needs, and how long each one stays on screen
+export function lengthNote(items, dur) {
+  if (!dur) return '';
+  const rec = Math.max(1, Math.round(dur / PHOTO_SECS));
+  if (!items.length) return `This scene is about ${secs(dur)}: ${rec === 1 ? '1 photo is' : `${rec} photos are`} enough (about ${PHOTO_SECS} seconds each), or one video of at least ${secs(dur)}.`;
+  const slot = dur / items.length;
+  let note = `This scene is about ${secs(dur)}: each of your ${items.length} item${items.length > 1 ? 's' : ''} stays on screen about ${slot.toFixed(1)} s.`;
+  if (slot < 2.5) note += ' That is quick: fewer items would look calmer.';
+  else if (items.length < rec && items.every(x => x.kind === 'photo')) note += ` ${rec - items.length} more photo${rec - items.length > 1 ? 's' : ''} would make it about ${PHOTO_SECS} seconds each (optional).`;
+  else if (items.length >= rec || items.some(x => x.kind === 'video')) note += ' That is enough.';
+  return note;
+}
+
+export function stripHtml(items, scope, casePhotos, hint, dur) {
   const esc = X.esc;
+  const slot = dur && items.length ? dur / items.length : 0;
   return `<div class="np-media" data-scope="${scope}">
+    ${dur ? `<div class="np-length small-text">${esc(lengthNote(items, dur))}</div>` : ''}
     ${items.map((it, k) => `<div class="np-thumb" title="${esc(it.name)}">
-      <div class="np-thumb-pic" data-thumb="${it.id}"></div>
+      <div class="np-thumb-pic" data-thumb="${it.id}" data-slot="${slot}"></div>
+      ${slot ? `<div class="np-thumb-cap small-text" data-cap="${it.id}">${slot.toFixed(1)} s on screen</div>` : ''}
       <div class="np-thumb-btns">${k ? `<button class="btn ghost" type="button" data-media="left" data-item="${it.id}" title="Show earlier">←</button>` : ''}<button class="btn ghost" type="button" data-media="del" data-item="${it.id}" title="Remove">✕</button></div>
     </div>`).join('')}
     <div class="np-media-add">
@@ -75,6 +94,13 @@ export async function fillThumbs(root, allItems) {
     const u = await mediaUrl(it).catch(() => null);
     if (!u) { el.textContent = 'missing'; continue; }
     el.innerHTML = it.kind === 'video' ? `<video src="${u}#t=0.5" muted preload="metadata"></video><span class="np-vid">▶</span>` : `<img src="${u}" alt="">`;
+    // a video shorter than its turn on screen freezes on its last frame: say so
+    const v = el.querySelector('video'), slot = +el.dataset.slot;
+    if (v && slot) v.addEventListener('loadedmetadata', () => {
+      const cap = root.querySelector(`[data-cap="${it.id}"]`);
+      if (cap && v.duration && v.duration < slot - 0.3) { cap.textContent = `Video is ${v.duration.toFixed(1)} s but shows ${slot.toFixed(1)} s: the last frame holds`; cap.classList.add('np-warn'); }
+      else if (cap && v.duration) cap.textContent = `${slot.toFixed(1)} s on screen (video is ${v.duration.toFixed(1)} s)`;
+    }, { once: true });
   }
 }
 

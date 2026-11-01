@@ -2,6 +2,7 @@
 // edited as a simple list (drag, trim, add, delete), previewed in order, script exported.
 
 import { addFiles, casePhotoItem, stripHtml, fillThumbs, migrate } from './media.js';
+import { partLength } from './finish.js';
 
 let X = null;               // helpers from footage.js
 const $ = id => document.getElementById(id);
@@ -127,9 +128,10 @@ function visuals(s, hint) {
   const c = X.cur();
   const items = s.media || [];
   const photos = c.files.filter(f => f.type === 'photo');
+  const dur = (s.type === 'narration' && partLength(c, s.id)) || segSecs(s);
   return `<details class="seg-vis" data-vis="${s.id}" ${items.length || openVis.has(s.id) ? 'open' : ''}>
     <summary>Photos or videos on screen${items.length ? ` (${items.length})` : ''}</summary>
-    ${stripHtml(items, s.id, photos, hint)}
+    ${stripHtml(items, s.id, photos, hint, dur)}
   </details>`;
 }
 
@@ -148,6 +150,67 @@ function narrCard(s, i, n) {
       <button class="btn ghost" data-act="del" type="button" title="Delete">✕</button>
     </div>
   </li>`;
+}
+
+// ---------- fixing who said what (edits the file's transcript, so captions everywhere use it) ----------
+const editLines = new Set(); // clip scenes with the line editor open
+const uttIn = (f, s) => ((f && f.transcript && f.transcript.utterances) || []).map((u, i) => ({ u, i })).filter(x => x.u.e > s.start && x.u.s < s.end);
+
+function lineEditor(f, s) {
+  const names = X.speakerMap(f);
+  const letters = [...new Set([...((f.transcript && f.transcript.utterances) || []).map(u => u.sp), ...Object.keys(f.speakerNames || {})])];
+  const opts = sp => letters.map(l => `<option value="${X.esc(l)}" ${l === sp ? 'selected' : ''}>${X.esc(names[l] || 'Speaker ' + l)}</option>`).join('') + '<option value="__new">+ Someone else…</option>';
+  const rows = uttIn(f, s);
+  if (!rows.length) return '<span class="muted">No speech in this clip.</span>';
+  return `<div class="tl-help muted small-text">Fix who is speaking and what they say. To give part of a line to someone else: click in the text where they start talking, click "Split here", then pick the speaker for the new line. Changes apply to this file everywhere (captions, transcript).</div>` +
+    rows.map(({ u, i }) => `<div class="tl-line" data-u="${i}">
+      <span class="mono small-text muted">${X.fmtH(u.s)}</span>
+      <select data-tl="sp">${opts(u.sp)}</select>
+      <textarea data-tl="text" rows="${Math.min(5, Math.max(1, Math.ceil(u.text.length / 90)))}">${X.esc(u.text)}</textarea>
+      <div class="tl-btns"><button class="btn ghost small" data-tl="split" type="button" title="Split this line where the text cursor is">Split here</button><button class="btn ghost small" data-tl="del" type="button" title="Delete this line">✕</button></div>
+    </div>`).join('');
+}
+
+async function onLineEdit(e) {
+  const el = e.target.closest('[data-tl]');
+  if (!el) return false;
+  const li = el.closest('.seg');
+  const s = story(X.cur()).segments[+li.dataset.i];
+  const f = X.fileById(s.file);
+  const utt = f && f.transcript && f.transcript.utterances;
+  const row = el.closest('.tl-line');
+  if (!utt || !row) return true;
+  const i = +row.dataset.u, u = utt[i];
+  const act = el.dataset.tl;
+  if (e.type === 'change' && act === 'sp') {
+    if (el.value === '__new') {
+      const name = (prompt('Who is speaking? (for example "911 Operator" or "Witness 3")') || '').trim();
+      if (!name) { el.value = u.sp; return true; }
+      const names = X.speakerMap(f);
+      let letter = Object.keys(names).find(k => names[k].toLowerCase() === name.toLowerCase());
+      if (!letter) { let k = 1; while (names['N' + k] || utt.some(x => x.sp === 'N' + k)) k++; letter = 'N' + k; f.speakerNames = { ...(f.speakerNames || {}), [letter]: name }; }
+      u.sp = letter;
+    } else u.sp = el.value;
+  } else if (e.type === 'change' && act === 'text') {
+    u.text = el.value.trim();
+    if (!u.text) utt.splice(i, 1);
+  } else if (e.type === 'click' && act === 'split') {
+    const ta = row.querySelector('textarea');
+    const pos = ta.selectionStart;
+    const a = ta.value.slice(0, pos).trim(), b = ta.value.slice(pos).trim();
+    if (!a || !b) { alert('First click in the text exactly where the other person starts talking, then click "Split here".'); return true; }
+    const wa = a.split(/\s+/).length, wb = b.split(/\s+/).length;
+    const t = u.s + (u.e - u.s) * wa / (wa + wb);
+    utt.splice(i + 1, 0, { ...u, s: Math.round(t * 100) / 100, text: b });
+    u.e = Math.round(t * 100) / 100; u.text = a;
+  } else if (e.type === 'click' && act === 'del') {
+    if (!confirm('Delete this line from the transcript?')) return true;
+    utt.splice(i, 1);
+  } else return true;
+  f.transcriptEdited = true;
+  await X.save();
+  renderStory();
+  return true;
 }
 
 function clipLines(f, s) {
@@ -171,7 +234,8 @@ function clipCard(s, i, k) {
         &nbsp; End <button class="btn ghost" data-act="nudge" data-edge="end" data-d="-5" type="button">−5s</button><button class="btn ghost" data-act="nudge" data-edge="end" data-d="-1" type="button">−1s</button>
         <input data-field="end" value="${X.fmtH(s.end)}"><button class="btn ghost" data-act="nudge" data-edge="end" data-d="1" type="button">+1s</button><button class="btn ghost" data-act="nudge" data-edge="end" data-d="5" type="button">+5s</button>
       </div>
-      <div class="seg-lines">${clipLines(f, s)}</div>
+      ${editLines.has(s.id) ? `<div class="tl-edit">${lineEditor(f, s)}</div>` : `<div class="seg-lines">${clipLines(f, s)}</div>`}
+      ${f && f.transcript ? `<button class="btn ghost small tl-toggle" data-act="lines" type="button">${editLines.has(s.id) ? 'Done editing lines' : 'Edit lines (who said what)'}</button>` : ''}
       ${visuals(s, f && f.type === 'audio' ? 'Shown one after another while the recording plays; photos slowly zoom. Without any, a title card is shown.' : 'These replace the footage picture during this clip (its sound stays), one after another.')}
     </div>
     <div class="seg-side">
@@ -224,6 +288,7 @@ function wireList() {
     if (d) { if (d.open) openVis.add(d.dataset.vis); else openVis.delete(d.dataset.vis); }
   }, true);
   list.addEventListener('click', async e => {
+    if (e.target.closest('[data-tl="split"], [data-tl="del"]')) { await onLineEdit(e); return; }
     const mb = e.target.closest('[data-media]');
     if (mb) {
       const s = story(X.cur()).segments[+mb.closest('.seg').dataset.i];
@@ -244,6 +309,7 @@ function wireList() {
     const s = segs[i];
     const act = b.dataset.act;
     if (act === 'play') return preview(i);
+    if (act === 'lines') { if (editLines.has(s.id)) editLines.delete(s.id); else editLines.add(s.id); renderStory(); return; }
     if (act === 'view') { const f = X.fileById(s.file); if (f) X.openViewer(f, s.start); return; }
     if (act === 'up' && i > 0) [segs[i - 1], segs[i]] = [segs[i], segs[i - 1]];
     else if (act === 'down' && i < segs.length - 1) [segs[i + 1], segs[i]] = [segs[i], segs[i + 1]];
@@ -266,6 +332,7 @@ function wireList() {
     saveSoon();
   });
   list.addEventListener('change', async e => {
+    if (e.target.closest('[data-tl]')) { await onLineEdit(e); return; }
     if (e.target.matches('[data-media-add], [data-case-photo]')) {
       const c = X.cur();
       const s = story(c).segments[+e.target.closest('.seg').dataset.i];

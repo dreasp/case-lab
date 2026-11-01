@@ -92,11 +92,14 @@ function audioDuration(file) {
 
 // Where each narration part is in the recording (worked out again from the stored word timing,
 // so editing a part's text later still works)
+let alignMemo = { key: null, words: null };
 function matchParts(c) {
   const n = c.narr || {};
   const parts = narrParts(c);
   if (!n.words || !n.words.length || !parts.length) return null;
-  const words = alignWords(parts.map(p => p.text), n.words);
+  const key = n.words.length + '|' + (n.at || 0) + '|' + parts.map(p => p.text).join('\u0001');
+  if (alignMemo.key !== key) alignMemo = { key, words: alignWords(parts.map(p => p.text), n.words) };
+  const words = alignMemo.words;
   return parts.map((p, i) => {
     const ws = words.filter(w => w.p === i);
     const adj = (n.adj || {})[p.id] || { d0: 0, d1: 0 };
@@ -627,4 +630,11 @@ export function wireFinalPreview() {
   $('fpPrev').addEventListener('click', () => { if (!PV) return; const T = nowT(); const sg = PV.plan.segs[PV.i]; seekTo(T - sg.t0 > 2 || PV.i === 0 ? sg.t0 : PV.plan.segs[PV.i - 1].t0); });
   $('fpNext').addEventListener('click', () => { if (PV && PV.i < PV.plan.segs.length - 1) seekTo(PV.plan.segs[PV.i + 1].t0); });
   $('fpBar').addEventListener('click', e => { if (!PV) return; const r = e.currentTarget.getBoundingClientRect(); seekTo((e.clientX - r.left) / r.width * PV.plan.total); });
+}
+
+// Real length of a narration part on screen (from your recording), or null before it's uploaded
+export function partLength(c, id) {
+  const m = matchParts(c);
+  const x = m && m.find(y => y.id === id);
+  return x ? LEAD + (x.a1 - x.a0) + TAIL : null;
 }
