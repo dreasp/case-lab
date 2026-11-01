@@ -350,7 +350,7 @@ async function run(job) {
         if (sg.pic.freeze) {
           if (!held) { const f = await rd.frameAt(sg.pic.from); held = f ? await createImageBitmap(f) : null; }
           pic = held;
-        } else pic = await rd.frameAt(sg.pic.from + into);
+        } else pic = await rd.frameAt(sg.pic.until != null ? Math.min(sg.pic.from + into, sg.pic.until) : sg.pic.from + into);
       } catch (e) { problems.push(`Picture at ${fmtTime(t)}: ${e.message}`); rd = null; }
       if (pic) CaseDraw.drawMedia(ctx, pic, W, H, frameMode(rd.src), 1, true);
     } else if (sg.pic && sg.pic.card) {

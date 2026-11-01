@@ -414,3 +414,12 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .tl-btns { display: flex; gap: 4px; }
 .tl-btns .btn { padding: 4px 8px; font-size: 11px; }
 @media (max-width: 800px) { .tl-line { grid-template-columns: 1fr; } }
+/* Trim window for your own videos */
+.trim-dialog { width: min(820px, 96vw); }
+.trim-dialog video { width: 100%; max-height: 52vh; background: #000; border-radius: 10px; margin-top: 10px; }
+.trim-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 8px 0; font-size: 13px; color: var(--muted); }
+.trim-row label { display: inline-flex; gap: 6px; align-items: center; }
+.trim-row input { width: 86px; background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 6px 8px; font: 12px 'IBM Plex Mono', ui-monospace, monospace; }
+.trim-mute { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; margin: 4px 0; }
+.trim-mute input { width: 18px; height: 18px; accent-color: var(--gold); }
+.np-thumb-btns { flex-wrap: wrap; }

@@ -1,7 +1,7 @@
 // Story builder (footage step 2): AI rough cut in story order with narration drafts,
 // edited as a simple list (drag, trim, add, delete), previewed in order, script exported.
 
-import { addFiles, casePhotoItem, stripHtml, fillThumbs, migrate } from './media.js';
+import { addFiles, casePhotoItem, stripHtml, fillThumbs, migrate, openTrim } from './media.js';
 import { partLength } from './finish.js';
 
 let X = null;               // helpers from footage.js
@@ -295,6 +295,12 @@ function wireList() {
       const items = s.media || [];
       const k = items.findIndex(x => x.id === mb.dataset.item);
       if (k < 0) return;
+      if (mb.dataset.media === 'trim') {
+        const c = X.cur();
+        const dur = (s.type === 'narration' && partLength(c, s.id)) || segSecs(s);
+        openTrim(items[k], dur, async () => { await X.save(); renderStory(); });
+        return;
+      }
       if (mb.dataset.media === 'del') items.splice(k, 1); else if (k > 0) [items[k - 1], items[k]] = [items[k], items[k - 1]];
       s.media = items;
       openVis.add(s.id);

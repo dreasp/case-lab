@@ -2,7 +2,7 @@
 // then the whole story is built at full quality from your original footage.
 
 import { alignWords, buildCues, DEFAULT_STYLE } from './captions.js';
-import { mediaUrl, mediaBlob, migrate } from './media.js';
+import { mediaUrl, mediaBlob, migrate, slots } from './media.js';
 
 let X = null;
 const $ = id => document.getElementById(id);
@@ -411,11 +411,12 @@ async function exportVideo() {
     const where = (f, t) => locate.get(f.id)(t);
     const segs = plan.segs.map(sg => {
       if (sg.pic && sg.pic.own) {
-        const d = sg.dur / sg.pic.own.length;
-        const pics = sg.pic.own.map((it, k) => ({ t: k * d, dur: d, pic: it.kind === 'photo' ? { img: 'own:' + it.id, kb: k % 2 } : { sid: 'own:' + it.id, from: 0 } }));
+        const sl = slots(sg.pic.own, sg.dur);
+        const items = sg.pic.own.slice(0, sl.length);
+        const pics = items.map((it, k) => ({ t: sl[k].t, dur: sl[k].d, pic: it.kind === 'photo' ? { img: 'own:' + it.id, kb: k % 2 } : { sid: 'own:' + it.id, from: it.from || 0, until: it.len ? (it.from || 0) + it.len : null } }));
         const sound = sg.kind === 'clip'
           ? sg.sound.map(s => { const w = where(s.file, s.from); return { sid: w.sid, from: w.from, gain: s.gain }; })
-          : sg.pic.own.map((it, k) => it.kind === 'video' ? { sid: 'own:' + it.id, from: 0, gain: duckGain, at: k * d, len: d } : null).filter(Boolean);
+          : items.map((it, k) => it.kind === 'video' && !it.muted ? { sid: 'own:' + it.id, from: it.from || 0, gain: duckGain, at: sl[k].t, len: it.len ? Math.min(it.len, sl[k].d) : sl[k].d } : null).filter(Boolean);
         return { t0: sg.t0, dur: sg.dur, pic: null, pics, sound, narr: sg.narr || null };
       }
       let pic = null;
@@ -510,7 +511,7 @@ async function loadSeg(i, into) {
   const token = ++PV.token;
   stopAll();
   const sg = PV.plan.segs[i];
-  PV.i = i; PV.narrStarted = false; PV.ownK = -1; PV.freeze = false;
+  PV.i = i; PV.narrStarted = false; PV.ownK = -1; PV.freeze = false; PV.vidEnd = null; PV.ownSl = null; PV.ownT = 0;
   const V = $('fpVideo'), A = $('fpAudio'), N = $('fpNarr'), IMG = $('fpImg'), CARD = $('fpCard');
   const nIdx = PV.plan.segs.slice(0, i + 1).filter(x => x.kind === 'narr').length;
   $('fpMeta').textContent = `${i + 1} of ${PV.plan.segs.length} · ${sg.kind === 'clip' ? 'clip' : 'narration ' + nIdx}`;
@@ -522,14 +523,15 @@ async function loadSeg(i, into) {
   const pic = sg.pic;
   PV.vidFrom = null; PV.audFrom = null;
   if (pic && pic.own) {
-    const d = sg.dur / pic.own.length;
-    const k = Math.min(pic.own.length - 1, Math.floor(into / d));
-    PV.ownK = k; PV.ownD = d;
+    const sl = slots(pic.own, sg.dur);
+    let k = sl.findIndex(x => into < x.t + x.d); if (k < 0) k = sl.length - 1;
+    PV.ownK = k; PV.ownSl = sl; PV.ownD = sl[k].d; PV.ownT = sl[k].t;
     const it = pic.own[k];
+    PV.vidEnd = it.kind === 'video' && it.len ? (it.from || 0) + it.len : null;
     const u = await mediaUrl(it).catch(() => null);
     if (token !== PV.token) return;
     if (it.kind === 'photo') { V.classList.add('hidden'); IMG.src = u || ''; IMG.classList.remove('hidden'); IMG.dataset.kb = k % 2; }
-    else { if (V.dataset.src !== u) { V.src = u || ''; V.dataset.src = u || ''; } V.muted = sg.kind === 'clip'; V.volume = PV.duck; PV.vidFrom = 0 - k * d; }
+    else { if (V.dataset.src !== u) { V.src = u || ''; V.dataset.src = u || ''; } V.muted = sg.kind === 'clip' || !!it.muted; V.volume = PV.duck; PV.vidFrom = (it.from || 0) - sl[k].t; }
     if (sg.kind === 'clip' && sg.sound[0]) {
       const md = await previewMedia(sg.sound[0].file);
       if (token !== PV.token) return;
@@ -579,17 +581,18 @@ function tick() {
     const into = T - sg.t0;
     if (T >= PV.plan.total) { togglePlay(false); PV.base = PV.plan.total; }
     else if (into >= sg.dur && PV.i < segs.length - 1) { loadSeg(PV.i + 1, T - segs[PV.i + 1].t0); }
-    else if (sg.pic && sg.pic.own && Math.min(sg.pic.own.length - 1, Math.floor(into / PV.ownD)) !== PV.ownK) { loadSeg(PV.i, into); }
+    else if (sg.pic && sg.pic.own && PV.ownSl && (into >= PV.ownT + PV.ownD || into < PV.ownT) && PV.ownK < PV.ownSl.length - 1) { loadSeg(PV.i, into); }
     else {
       if (sg.narr && !PV.narrStarted && into >= sg.narr.lead) { $('fpNarr').play().catch(() => {}); PV.narrStarted = true; }
       if (sg.narr && into >= sg.narr.lead + sg.narr.len) $('fpNarr').pause();
       // keep the 1-frame-a-second picture in step with the sound
       const V = $('fpVideo'), A = $('fpAudio');
-      if (PV.audFrom != null && PV.vidFrom != null && !PV.freeze && Math.abs((V.currentTime - PV.vidFrom) - (A.currentTime - PV.audFrom)) > 1.5) V.currentTime = PV.vidFrom + (A.currentTime - PV.audFrom);
+      if (PV.vidEnd != null && V.currentTime >= PV.vidEnd) { if (!V.paused) V.pause(); }
+      else if (PV.audFrom != null && PV.vidFrom != null && !PV.freeze && Math.abs((V.currentTime - PV.vidFrom) - (A.currentTime - PV.audFrom)) > 1.5) V.currentTime = PV.vidFrom + (A.currentTime - PV.audFrom);
     }
     const IMG = $('fpImg');
     if (!IMG.classList.contains('hidden') && PV.ownD) {
-      const p = Math.min(1, ((T - sg.t0) % PV.ownD) / PV.ownD);
+      const p = Math.min(1, Math.max(0, (T - sg.t0 - (PV.ownT || 0)) / PV.ownD));
       IMG.style.transform = `scale(${IMG.dataset.kb === '1' ? 1.08 - 0.08 * p : 1 + 0.08 * p})`;
     }
   }

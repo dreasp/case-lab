@@ -460,6 +460,29 @@
     <p id="fpNote" class="muted small-text"></p>
   </dialog>
 
+  <!-- Choosing the part of your own video -->
+  <dialog id="trimDialog" class="swap trim-dialog">
+    <div class="swap-head">
+      <div><div class="mono muted small-text" id="trimTotal"></div><h3>Choose the part to use</h3><div class="muted small-text" id="trimName"></div></div>
+      <button id="trimClose" class="btn ghost small" type="button">Close</button>
+    </div>
+    <video id="trimVideo" controls playsinline></video>
+    <p class="muted small-text">Play the video and pause where you want it to start, then click "Start here". Do the same for the end. Leave the end empty to use as much as the scene needs.</p>
+    <div class="trim-row">
+      <label>Start <input id="trimStart"></label><button id="trimSetStart" class="btn small" type="button">Start here</button>
+      <label>End <input id="trimEnd" placeholder="(fit the scene)"></label><button id="trimSetEnd" class="btn small" type="button">End here</button>
+      <span id="trimLen" class="mono small-text"></span>
+    </div>
+    <label class="trim-mute"><input id="trimMute" type="checkbox"> Mute this video's sound</label>
+    <p id="trimNote" class="muted small-text"></p>
+    <div class="case-actions">
+      <button id="trimPlay" class="btn" type="button">▶ Play the chosen part</button>
+      <button id="trimWhole" class="btn ghost" type="button">Use from the beginning</button>
+      <div class="grow"></div>
+      <button id="trimSave" class="btn primary" type="button">Save</button>
+    </div>
+  </dialog>
+
   <dialog id="editDialog" class="swap editor">
     <div class="swap-head">
       <div>
