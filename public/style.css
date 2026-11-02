@@ -439,3 +439,10 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .mute-found { max-height: 220px; overflow: auto; margin: 8px 0; }
 #finMuteReport { margin-bottom: 10px; }
 .missing-list { margin: 8px 0; display: grid; gap: 6px; } .missing-list li { display: flex; gap: 10px; align-items: center; }
+/* Fixing captions inside the preview */
+.fp-cap span { cursor: pointer; }
+.fp-cap { pointer-events: auto; }
+.fp-cap span:hover { outline: 2px solid var(--gold); outline-offset: 2px; }
+.fp-lines { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; max-height: 42vh; overflow: auto; }
+.fp-lines-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; position: sticky; top: 0; background: var(--panel); padding-bottom: 6px; z-index: 1; }
+.tl-line.tl-focus { background: rgba(214, 168, 74, 0.12); border-radius: 8px; box-shadow: 0 0 0 1px var(--gold); padding: 4px; }

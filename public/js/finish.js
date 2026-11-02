@@ -3,6 +3,7 @@
 
 import { alignWords, buildCues, DEFAULT_STYLE } from './captions.js';
 import { mediaUrl, mediaBlob, migrate, slots } from './media.js';
+import { linesBetween, linesHtml, applyLineEdit } from './lines.js';
 import { getWords, timeLines, DEFAULT_MUTE, muteMatcher, maskWord, swearsIn } from './words.js';
 
 let X = null;
@@ -310,7 +311,7 @@ async function captionCues(plan, mode, aspect, isSwear = null) {
         if (!words.length) return;
         const who = names[u.sp] || 'Speaker ' + u.sp;
         // the speaker's name takes room on screen, so lines are a little shorter
-        for (const q of buildCues(words, preset).flatMap(q => splitCue(q, preset === 'bold' ? 3 : 9))) { q.who = who; q.color = colorOf(who); all.push(q); }
+        for (const q of buildCues(words, preset).flatMap(q => splitCue(q, preset === 'bold' ? 3 : 9))) { q.who = who; q.color = colorOf(who); q.fid = f.id; all.push(q); }
       });
     }
   }
@@ -577,7 +578,7 @@ async function previewFinal() {
   let nurl;
   try { nurl = await narrSrc(); } catch (e) { return alert(e.message); }
   const mutes = isSwear ? await planSwears(c, plan, isSwear) : null;
-  PV = { plan, cues: caps ? caps.cues : [], mutes, i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
+  PV = { plan, capMode: opts.caps || 'footage', isSwear, cues: caps ? caps.cues : [], mutes, i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
   $('fpNarr').src = nurl;
   $('fpTotal').textContent = X.fmtH(plan.total);
   $('fpBar').innerHTML = '<div id="fpFill"></div>' + plan.segs.slice(1).map(sg => `<i style="left:${sg.t0 / plan.total * 100}%"></i>`).join('');
@@ -727,6 +728,7 @@ function tick() {
   const fill = $('fpFill'); if (fill) fill.style.width = `${Math.min(100, T / PV.plan.total * 100)}%`;
   $('fpTime').textContent = X.fmtH(T);
   const cue = PV.cues.find(q => T >= q.s && T < q.e);
+  PV.cue = cue || null;
   const cap = $('fpCap');
   if (cue) { cap.innerHTML = `<span style="color:${cue.color || '#fff'}">${cue.who ? X.esc(cue.who) + ': ' : ''}${X.esc(cue.words.map(w => w.w).join(' '))}</span>`; cap.classList.remove('hidden'); } else cap.classList.add('hidden');
   requestAnimationFrame(tick);
@@ -743,6 +745,7 @@ function togglePlay(play) {
 }
 
 function closePreview() {
+  $('fpLines').classList.add('hidden');
   if (!PV) return;
   PV.token++;
   stopAll();
@@ -751,7 +754,65 @@ function closePreview() {
   PV = null;
 }
 
+// ---------- fixing captions without leaving the preview ----------
+function openFix(f, at) {
+  if (!PV || !f) return;
+  togglePlay(false);
+  PV.fix = { f, at };
+  renderFix();
+  $('fpLines').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderFix() {
+  const { f, at } = PV.fix;
+  const box = $('fpLines');
+  box.innerHTML = `<div class="fp-lines-head"><strong>Lines around ${X.fmtH(at)} in "${X.esc(label(f))}"</strong>
+      <button id="fpFixDone" class="btn primary small" type="button">Done, keep watching</button></div>
+    <div class="tl-edit">${linesHtml(f, linesBetween(f, at - 10, at + 10), at)}</div>`;
+  box.classList.remove('hidden');
+  $('fpFixDone').onclick = closeFix;
+  const focus = box.querySelector('.tl-focus');
+  if (focus) focus.scrollIntoView({ block: 'nearest' });
+}
+
+async function closeFix() {
+  $('fpLines').classList.add('hidden');
+  PV.fix = null;
+  await seekTo(Math.max(0, nowT() - 2)); // replay the last moment to check the fix
+  togglePlay(true);
+}
+
+async function onFixEdit(e) {
+  if (!PV || !PV.fix || !e.target.closest('[data-tl]')) return;
+  if (!(await applyLineEdit(e, PV.fix.f))) return;
+  // captions (and swear words) follow the edit right away
+  const caps = await captionCues(PV.plan, PV.capMode, '16:9', PV.isSwear);
+  PV.cues = caps ? caps.cues : [];
+  if (PV.isSwear) PV.mutes = await planSwears(X.cur(), PV.plan, PV.isSwear);
+  renderFix();
+}
+
+// Where in its file the footage at preview time T is (for the line editor)
+function fileTimeAt(T, fid) {
+  const sg = PV.plan.segs[segAt(T)];
+  if (!sg || sg.kind !== 'clip' || !sg.file || (fid && sg.file.id !== fid)) return null;
+  return { f: sg.file, at: sg.from + (T - sg.t0) };
+}
+
 export function wireFinalPreview() {
+  $('fpCap').addEventListener('click', () => {
+    if (!PV) return;
+    const w = fileTimeAt(nowT(), PV.cue && PV.cue.fid);
+    if (w) openFix(w.f, w.at);
+  });
+  $('fpFix').addEventListener('click', () => {
+    if (!PV) return;
+    const w = fileTimeAt(nowT());
+    if (!w || !w.f.transcript) return alert('No one in the footage is speaking here: this part is your narration or a photo. Pause on a clip to fix its captions.');
+    openFix(w.f, w.at);
+  });
+  $('fpLines').addEventListener('change', onFixEdit);
+  $('fpLines').addEventListener('click', e => { if (e.target.closest('[data-tl="split"], [data-tl="del"]')) onFixEdit(e); });
   $('finPreview').addEventListener('click', previewFinal);
   $('fpClose').addEventListener('click', () => $('finDialog').close());
   $('finDialog').addEventListener('close', closePreview);

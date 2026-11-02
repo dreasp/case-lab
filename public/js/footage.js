@@ -10,6 +10,7 @@ import { initStory, renderStory } from './story.js';
 import { initFinish, renderFinish } from './finish.js';
 import { initMedia } from './media.js';
 import { initWords } from './words.js';
+import { initLines } from './lines.js';
 
 const $ = id => document.getElementById(id);
 const VIDEO_EXT = /\.(mp4|mov|m4v|wmv|avi|mpe?g|mkv|flv|3gp|webm|asf|vob|ts|mts|m2ts)$/i;
@@ -1024,6 +1025,7 @@ function renderViewerList() {
 
 // ---------- wiring ----------
 function wire() {
+  initLines({ cur: () => cur, save, esc, fmtH, speakerMap });
   initWords({ api, putFile: (k, b) => store.putFile(k, b), getFile: k => store.getFile(k) });
   initMedia({ esc, fileById, getLocalFile, signedUrls, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
   initFinish({ cur: () => cur, save, api, esc, fmtH, fileById, getLocalFile, linkOriginal, signedUrls, speakerMap, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
