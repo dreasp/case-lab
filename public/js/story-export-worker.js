@@ -302,8 +302,10 @@ async function run(job) {
   enc.configure(v.cfg);
   const canvas = new OffscreenCanvas(W, H);
   const ctx = canvas.getContext('2d', { alpha: false });
-  const out = job.captions ? new OffscreenCanvas(W, H) : canvas;
-  const octx = job.captions ? out.getContext('2d', { alpha: false }) : ctx;
+  // captions and the logo go on a separate layer, so they don't end up in the crossfade picture
+  const layered = !!(job.captions || job.watermark);
+  const out = layered ? new OffscreenCanvas(W, H) : canvas;
+  const octx = layered ? out.getContext('2d', { alpha: false }) : ctx;
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
 
   const frames = new Map(); // source id -> Frames reader
@@ -377,7 +379,9 @@ async function run(job) {
       if (sg.pic.sub) { ctx.fillStyle = '#9a9890'; ctx.font = `400 ${Math.round(Math.min(W, H) * 0.028)}px Arial, Helvetica, sans-serif`; ctx.fillText(sg.pic.sub, W / 2, H / 2 + Math.min(W, H) * 0.04); }
     }
     ctx.globalAlpha = 1;
-    if (job.captions) { octx.drawImage(canvas, 0, 0); CaseDraw.drawCaptions(octx, W, H, job.captions.cues, t, job.captions.style); }
+    if (layered) octx.drawImage(canvas, 0, 0);
+    if (job.captions) CaseDraw.drawCaptions(octx, W, H, job.captions.cues, t, job.captions.style);
+    if (job.watermark) CaseDraw.drawWatermark(octx, job.watermark.img, W, H, t, job.watermark);
     const frame = new VideoFrame(out, { timestamp: Math.round(k * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
     enc.encode(frame, { keyFrame: k % (FPS * 2) === 0 });
     frame.close();

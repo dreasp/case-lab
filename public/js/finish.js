@@ -38,6 +38,7 @@ export function initFinish(helpers) {
   $('finMuteList').addEventListener('change', () => { try { localStorage.setItem('caselab-mute-list', JSON.stringify($('finMuteList').value.split(/\n+/).map(x => x.trim()).filter(Boolean))); } catch (e) { /* not saved */ } $('finMuteReport').innerHTML = ''; });
   $('finMuteReset').addEventListener('click', () => { try { localStorage.removeItem('caselab-mute-list'); } catch (e) { /* ignore */ } $('finMuteList').value = DEFAULT_MUTE.join('\n'); $('finMuteReport').innerHTML = ''; });
   $('finMuteCheck').addEventListener('click', checkSwears);
+  wireWatermark();
   wireFinalPreview();
   $('finCancel').addEventListener('click', () => { if (worker) worker.postMessage({ type: 'cancel' }); });
   const a = $('narrAudio');
@@ -167,6 +168,7 @@ export function renderFinish() {
   $('finDuck').value = o.duck != null ? o.duck : 15;
   $('finDuckVal').textContent = $('finDuck').value + '%';
   $('finMute').checked = o.mute !== false;
+  renderWatermark(o);
   $('finMuteHow').value = o.muteHow || 'silence';
   const parts = narrParts(c);
   if (!storySegs(c).length) {
@@ -318,6 +320,53 @@ async function captionCues(plan, mode, aspect, isSwear = null) {
   all.sort((a, b) => a.s - b.s);
   for (let i = 0; i < all.length - 1; i++) if (all[i].e > all[i + 1].s) all[i].e = all[i + 1].s;
   return { cues: all.filter(x => x.e > x.s), style };
+}
+
+// ---------- watermark: your logo, saved once and used for every case ----------
+const WM_KEY = 'pglobal:logo:wm';
+let logoBlob, logoUrl = null;
+const wmSettings = () => { try { return { size: 0.1, opacity: 0.65, move: 'move', ...JSON.parse(localStorage.getItem('caselab-watermark') || '{}') }; } catch (e) { return { size: 0.1, opacity: 0.65, move: 'move' }; } };
+async function getLogo() {
+  if (logoBlob === undefined) logoBlob = (await X.getFile(WM_KEY).catch(() => null)) || null;
+  if (logoBlob && !logoUrl) logoUrl = URL.createObjectURL(logoBlob);
+  return logoBlob;
+}
+async function renderWatermark(o) {
+  const w = wmSettings();
+  $('wmSize').value = String(w.size);
+  $('wmOpacity').value = Math.round(w.opacity * 100);
+  $('wmOpVal').textContent = $('wmOpacity').value + '%';
+  $('wmMove').value = w.move;
+  const logo = await getLogo();
+  $('wmOn').checked = !!logo && (o || {}).wm !== false;
+  $('wmOn').disabled = !logo;
+  $('wmThumb').classList.toggle('hidden', !logo);
+  if (logo) $('wmThumb').src = logoUrl;
+  $('wmUpLabel').textContent = logo ? 'Change logo' : 'Upload logo';
+}
+function wireWatermark() {
+  const saveW = () => { try { localStorage.setItem('caselab-watermark', JSON.stringify({ size: +$('wmSize').value, opacity: +$('wmOpacity').value / 100, move: $('wmMove').value })); } catch (e) { /* not saved */ } };
+  $('wmOpacity').addEventListener('input', () => { $('wmOpVal').textContent = $('wmOpacity').value + '%'; saveW(); });
+  ['wmSize', 'wmMove'].forEach(id => $(id).addEventListener('change', saveW));
+  $('wmOn').addEventListener('change', async () => { const n = narr(); n.opts = { ...(n.opts || {}), wm: $('wmOn').checked }; await X.save(); });
+  $('wmFile').addEventListener('change', async e => {
+    const file = e.target.files[0]; e.target.value = '';
+    if (!file) return;
+    try {
+      const blob = new Blob([await file.arrayBuffer()], { type: file.type || 'image/png' });
+      await createImageBitmap(blob); // make sure it's a picture the browser can read
+      await X.putFileSafe(WM_KEY, blob);
+      logoBlob = blob; if (logoUrl) URL.revokeObjectURL(logoUrl); logoUrl = null;
+      const n = narr(); n.opts = { ...(n.opts || {}), wm: true }; await X.save();
+      renderFinish();
+    } catch (err) { alert('This logo could not be used: ' + err.message + '. Use a PNG (best with a see-through background), JPG or WEBP.'); }
+  });
+}
+async function watermarkJob(opts) {
+  if (opts.wm === false) return null;
+  const logo = await getLogo();
+  if (!logo) return null;
+  return { img: await createImageBitmap(logo), ...wmSettings() };
 }
 
 // ---------- swear words ----------
@@ -522,6 +571,7 @@ async function exportVideo() {
       aspect, bitrate: aspect === '9:16' ? 10_000_000 : 12_000_000,
       sources, segs, narration: pcm, narrGain, fileHandle,
       captions: await captionCues(plan, opts.caps || 'footage', aspect, opts.mute !== false ? muteMatcher(muteList()) : null),
+      watermark: await watermarkJob(opts),
       muteHow: opts.muteHow || 'silence',
     };
     progress(0.3, 'Building the video…');
@@ -535,7 +585,7 @@ async function exportVideo() {
         else if (d.type === 'error') bad(new Error(d.message));
       };
       worker.onerror = e => bad(new Error(e.message || 'The video engine stopped.'));
-      worker.postMessage({ type: 'start', job }, [pcm.buffer]);
+      worker.postMessage({ type: 'start', job }, [pcm.buffer, ...(job.watermark ? [job.watermark.img] : [])]);
     });
     progress(1, 'Done');
     $('finResult').innerHTML = `<div class="story-note"><strong>Your video is saved</strong> as "${X.esc(fileHandle.name)}" (${X.fmtH(res.duration)} long, built in ${X.fmtH(res.seconds)}).${usedCloud.length ? `<br><span class="muted small-text">The original of ${usedCloud.map(x => `"${X.esc(x)}"`).join(', ')} wasn't on this computer, so the copy saved in the cloud was used (same sound).</span>` : ''}${res.problems.length ? `<br><br><strong>Some parts had problems:</strong><ul>${res.problems.map(p => `<li>${X.esc(p)}</li>`).join('')}</ul>` : ''}</div>`;
@@ -578,7 +628,10 @@ async function previewFinal() {
   let nurl;
   try { nurl = await narrSrc(); } catch (e) { return alert(e.message); }
   const mutes = isSwear ? await planSwears(c, plan, isSwear) : null;
-  PV = { plan, capMode: opts.caps || 'footage', isSwear, cues: caps ? caps.cues : [], mutes, i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
+  const logo = opts.wm !== false ? await getLogo() : null;
+  $('fpWm').classList.toggle('hidden', !logo);
+  if (logo) $('fpWm').src = logoUrl;
+  PV = { wm: logo ? wmSettings() : null, plan, capMode: opts.caps || 'footage', isSwear, cues: caps ? caps.cues : [], mutes, i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
   $('fpNarr').src = nurl;
   $('fpTotal').textContent = X.fmtH(plan.total);
   $('fpBar').innerHTML = '<div id="fpFill"></div>' + plan.segs.slice(1).map(sg => `<i style="left:${sg.t0 / plan.total * 100}%"></i>`).join('');
@@ -729,6 +782,11 @@ function tick() {
   $('fpTime').textContent = X.fmtH(T);
   const cue = PV.cues.find(q => T >= q.s && T < q.e);
   PV.cue = cue || null;
+  if (PV.wm) {
+    // same place and timing as in the exported video (worked out on a 1920 x 1080 frame)
+    const b = CaseDraw.watermarkBox(1920, 1080, T, PV.wm), wm = $('fpWm');
+    wm.style.left = (b.x / 19.2) + '%'; wm.style.top = (b.y / 10.8) + '%'; wm.style.width = (b.size / 19.2) + '%'; wm.style.opacity = b.alpha;
+  }
   const cap = $('fpCap');
   if (cue) { cap.innerHTML = `<span style="color:${cue.color || '#fff'}">${cue.who ? X.esc(cue.who) + ': ' : ''}${X.esc(cue.words.map(w => w.w).join(' '))}</span>`; cap.classList.remove('hidden'); } else cap.classList.add('hidden');
   requestAnimationFrame(tick);

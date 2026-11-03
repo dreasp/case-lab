@@ -132,5 +132,43 @@
     x.restore();
   }
 
-  root.CaseDraw = { drawMedia, mediaLayout, drawCaptions };
+  // ---------- watermark (your logo) ----------
+  // cfg = { size: share of the video height, opacity 0..1, move: 'move' | 'tl' | 'tr' | 'bl' | 'br', every: seconds }
+  // Moving: a different corner every few minutes, with a short fade, so it's hard to crop or blur out.
+  const ORDER_WIDE = ['br', 'tl', 'tr', 'bl'];
+  const ORDER_TALL = ['tl', 'ml', 'tr']; // Shorts: away from YouTube's buttons on the right and the title at the bottom
+  function watermarkBox(W, H, t, cfg) {
+    const tall = H > W;
+    const size = Math.round((tall ? W * 1.35 : H) * (cfg.size || 0.1));
+    const m = Math.round(Math.min(W, H) * 0.035);
+    const every = cfg.every || 180, fade = 0.6;
+    let spot = cfg.move && cfg.move !== 'move' ? cfg.move : null, alpha = cfg.opacity == null ? 0.65 : cfg.opacity;
+    if (!spot) {
+      const order = tall ? ORDER_TALL : ORDER_WIDE;
+      const k = Math.floor(t / every), into = t - k * every;
+      spot = order[k % order.length];
+      if (k > 0 && into < fade) alpha *= into / fade;                 // fade in at the new corner
+      if (every - into < fade) alpha *= Math.max(0, (every - into) / fade); // fade out before moving
+    }
+    const pos = {
+      tl: [m, tall ? H * 0.09 : m], tr: [W - m - size, tall ? H * 0.09 : m],
+      bl: [m, H - m - size], br: [W - m - size, H - m - size],
+      ml: [m, H * 0.58],
+    }[spot] || [W - m - size, H - m - size];
+    return { x: Math.round(pos[0]), y: Math.round(pos[1]), size, alpha };
+  }
+  function drawWatermark(x, img, W, H, t, cfg) {
+    if (!img) return;
+    const b = watermarkBox(W, H, t, cfg);
+    if (b.alpha <= 0.01) return;
+    const r = (img.width || img.naturalWidth) / (img.height || img.naturalHeight) || 1;
+    const w = r >= 1 ? b.size : b.size * r, h = r >= 1 ? b.size / r : b.size;
+    x.save();
+    x.globalAlpha = b.alpha;
+    x.imageSmoothingQuality = 'high';
+    x.drawImage(img, b.x + (b.size - w) / 2, b.y + (b.size - h) / 2, w, h);
+    x.restore();
+  }
+
+  root.CaseDraw = { drawMedia, mediaLayout, drawCaptions, watermarkBox, drawWatermark };
 })(typeof self !== 'undefined' ? self : window);

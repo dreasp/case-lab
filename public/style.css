@@ -446,3 +446,8 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .fp-lines { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; max-height: 42vh; overflow: auto; }
 .fp-lines-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; position: sticky; top: 0; background: var(--panel); padding-bottom: 6px; z-index: 1; }
 .tl-line.tl-focus { background: rgba(214, 168, 74, 0.12); border-radius: 8px; box-shadow: 0 0 0 1px var(--gold); padding: 4px; }
+/* Watermark */
+.wm-box { padding-top: 6px; border-top: 1px solid var(--line); margin-top: 6px; }
+.wm-thumb { width: 44px; height: 44px; object-fit: contain; border-radius: 6px; background: #000; }
+.wm-box select { background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 13px; }
+.fp-wm { position: absolute; pointer-events: none; height: auto; }

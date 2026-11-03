@@ -322,6 +322,14 @@
                 <p class="muted small-text">One per line. A * at the end also catches longer words: fuck* covers fucking, fucked and fuckin'. The same words are masked in the captions, like f******. <button id="finMuteReset" class="btn ghost small" type="button">Back to the standard list</button></p>
               </details>
               <div id="finMuteReport"></div>
+              <div class="fin-opts wm-box">
+                <label class="trim-mute"><input id="wmOn" type="checkbox" checked> Watermark with my logo</label>
+                <img id="wmThumb" class="wm-thumb hidden" alt="Your logo">
+                <label class="btn ghost small"><span id="wmUpLabel">Upload logo</span><input id="wmFile" type="file" accept="image/png,image/webp,image/jpeg" hidden></label>
+                <label>Size <select id="wmSize"><option value="0.07">Small</option><option value="0.1">Medium</option><option value="0.13">Large</option></select></label>
+                <label>Strength <input id="wmOpacity" type="range" min="30" max="100" step="5" value="65"> <span id="wmOpVal" class="mono">65%</span></label>
+                <label>Where <select id="wmMove"><option value="move">Moves to a new corner every 3 minutes</option><option value="br">Always bottom-right</option><option value="bl">Always bottom-left</option><option value="tr">Always top-right</option><option value="tl">Always top-left</option></select></label>
+              </div>
               <p id="finSummary" class="muted small-text"></p>
               <p class="muted small-text">Built at full quality from your original files, straight onto your computer. It can take a while for a long video: keep this tab open (you can use other tabs and apps meanwhile).</p>
               <div class="case-actions">
@@ -464,6 +472,7 @@
       <img id="fpImg" class="fp-img hidden" alt="">
       <div id="fpCard" class="sp-narr hidden"></div>
       <div id="fpCap" class="fp-cap hidden"></div>
+      <img id="fpWm" class="fp-wm hidden" alt="">
     </div>
     <audio id="fpAudio"></audio>
     <audio id="fpNarr"></audio>
