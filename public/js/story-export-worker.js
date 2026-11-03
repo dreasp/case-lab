@@ -188,12 +188,25 @@ async function soundOf(src, from, dur) {
 }
 
 // Brings a piece of sound to an even loudness (quiet bodycams up, loud ones down)
+// Brings a piece of sound to the same loudness as everything else. Measures the speech, not the
+// pauses, so a quiet interview with long silences is turned up properly (up to about 23 dB).
 function level(x, target) {
-  let sum = 0, cnt = 0;
-  for (let i = 0; i < x.length; i += 4) { sum += x[i] * x[i]; cnt++; }
-  const rms = Math.sqrt(sum / Math.max(1, cnt));
-  if (rms < 1e-4) return x;
-  const g = Math.max(0.3, Math.min(8, target / rms));
+  const F = 2400; // 50 ms
+  const frames = [];
+  for (let i = 0; i + F <= x.length; i += F) {
+    let s = 0;
+    for (let k = i; k < i + F; k += 2) s += x[k] * x[k];
+    frames.push(Math.sqrt(s / (F / 2)));
+  }
+  if (!frames.length) return x;
+  const sorted = [...frames].sort((a, b) => a - b);
+  const loud = sorted[Math.floor(sorted.length * 0.95)] || sorted[sorted.length - 1];
+  const gate = Math.max(0.002, loud * 0.1);
+  let p = 0, n = 0;
+  for (const r of frames) if (r >= gate) { p += r * r; n++; }
+  if (!n) return x;
+  const speech = Math.sqrt(p / n);
+  const g = Math.max(0.3, Math.min(14, target / speech));
   for (let i = 0; i < x.length; i++) x[i] *= g;
   return x;
 }
@@ -273,7 +286,7 @@ async function run(job) {
         await src.open();
         if (src.aErr && !src.aWarned) { problems.push(src.aErr); src.aWarned = true; }
         const at = Math.round((snd.at || 0) * SR);
-        const x = fadeEdges(level(await soundOf(src, snd.from, snd.len || sg.dur), 0.1));
+        const x = fadeEdges(level(await soundOf(src, snd.from, snd.len || sg.dur), 0.11));
         if (snd.mute) muteWords(x, snd.mute, job.muteHow);
         for (let i = 0; i < x.length && at + i < n; i++) mix[at + i] += x[i] * snd.gain;
       } catch (e) { problems.push(`Sound of "${src.name}" at ${fmtTime(sg.t0)}: ${e.message}`); }

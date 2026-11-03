@@ -5,6 +5,7 @@ import { addFiles, casePhotoItem, stripHtml, fillThumbs, migrate, openTrim } fro
 import { partLength } from './finish.js';
 import { linesBetween, linesHtml, applyLineEdit } from './lines.js';
 import { getWords } from './words.js';
+import { evenVolume } from './even-volume.js';
 
 let X = null;               // helpers from footage.js
 const $ = id => document.getElementById(id);
@@ -485,6 +486,7 @@ async function onPreviewFix(e) {
 }
 
 function wirePreview() {
+  evenVolume($('spAudio')); evenVolume($('spVideo'));
   $('spFix').addEventListener('click', onPreviewFix);
   $('spClose').addEventListener('click', () => $('storyDialog').close());
   $('storyDialog').addEventListener('close', stopPreview);

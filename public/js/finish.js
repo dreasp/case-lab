@@ -1,6 +1,7 @@
 // Final video (footage step 3): your recorded narration is matched to the narration parts,
 // then the whole story is built at full quality from your original footage.
 
+import { evenVolume } from './even-volume.js';
 import { alignWords, buildCues, DEFAULT_STYLE } from './captions.js';
 import { mediaUrl, mediaBlob, migrate, slots } from './media.js';
 import { linesBetween, linesHtml, applyLineEdit } from './lines.js';
@@ -17,6 +18,7 @@ const UNDER = { next: 'Lead-up to the next clip', prev: 'What comes after the la
 const IMG = /\.(jpe?g|png|webp|gif)$/i;
 
 export function initFinish(helpers) {
+  evenVolume(document.getElementById('fpAudio')); evenVolume(document.getElementById('fpVideo'));
   X = helpers;
   $('narrFile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) uploadNarration(f); });
   $('narrParts').addEventListener('click', onPartClick);
