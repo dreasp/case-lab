@@ -326,9 +326,10 @@
                 <label class="trim-mute"><input id="wmOn" type="checkbox" checked> Watermark with my logo</label>
                 <img id="wmThumb" class="wm-thumb hidden" alt="Your logo">
                 <label class="btn ghost small"><span id="wmUpLabel">Upload logo</span><input id="wmFile" type="file" accept="image/png,image/webp,image/jpeg" hidden></label>
-                <label>Size <select id="wmSize"><option value="0.07">Small</option><option value="0.1">Medium</option><option value="0.13">Large</option></select></label>
+                <label>Size <input id="wmSize" type="range" min="8" max="30" step="1" value="14"> <span id="wmSizeVal" class="mono">14%</span></label>
                 <label>Strength <input id="wmOpacity" type="range" min="30" max="100" step="5" value="65"> <span id="wmOpVal" class="mono">65%</span></label>
-                <label>Where <select id="wmMove"><option value="move">Moves to a new corner every 3 minutes</option><option value="br">Always bottom-right</option><option value="bl">Always bottom-left</option><option value="tr">Always top-right</option><option value="tl">Always top-left</option></select></label>
+                <label>Where <select id="wmMove"><option value="move">Moves to a new corner</option><option value="br">Always bottom-right</option><option value="bl">Always bottom-left</option><option value="tr">Always top-right</option><option value="tl">Always top-left</option></select></label>
+                <label id="wmEveryBox">every <select id="wmEvery"><option value="30">30 seconds</option><option value="60">minute</option><option value="120">2 minutes</option><option value="180">3 minutes</option><option value="300">5 minutes</option></select></label>
               </div>
               <p id="finSummary" class="muted small-text"></p>
               <p class="muted small-text">Built at full quality from your original files, straight onto your computer. It can take a while for a long video: keep this tab open (you can use other tabs and apps meanwhile).</p>

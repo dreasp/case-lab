@@ -325,7 +325,13 @@ async function captionCues(plan, mode, aspect, isSwear = null) {
 // ---------- watermark: your logo, saved once and used for every case ----------
 const WM_KEY = 'pglobal:logo:wm';
 let logoBlob, logoUrl = null;
-const wmSettings = () => { try { return { size: 0.1, opacity: 0.65, move: 'move', ...JSON.parse(localStorage.getItem('caselab-watermark') || '{}') }; } catch (e) { return { size: 0.1, opacity: 0.65, move: 'move' }; } };
+const WM_DEFAULT = { size: 0.14, opacity: 0.65, move: 'move', every: 180 };
+const wmSettings = () => {
+  let w = { ...WM_DEFAULT };
+  try { w = { ...w, ...JSON.parse(localStorage.getItem('caselab-watermark') || '{}') }; } catch (e) { /* defaults */ }
+  if (w.size < 0.08) w.size = 0.14; // the old "small" was too small
+  return w;
+};
 async function getLogo() {
   if (logoBlob === undefined) logoBlob = (await X.getFile(WM_KEY).catch(() => null)) || null;
   if (logoBlob && !logoUrl) logoUrl = URL.createObjectURL(logoBlob);
@@ -333,7 +339,10 @@ async function getLogo() {
 }
 async function renderWatermark(o) {
   const w = wmSettings();
-  $('wmSize').value = String(w.size);
+  $('wmSize').value = Math.round(w.size * 100);
+  $('wmSizeVal').textContent = $('wmSize').value + '%';
+  $('wmEvery').value = String(w.every || 180);
+  $('wmEveryBox').classList.toggle('hidden', w.move !== 'move');
   $('wmOpacity').value = Math.round(w.opacity * 100);
   $('wmOpVal').textContent = $('wmOpacity').value + '%';
   $('wmMove').value = w.move;
@@ -345,9 +354,15 @@ async function renderWatermark(o) {
   $('wmUpLabel').textContent = logo ? 'Change logo' : 'Upload logo';
 }
 function wireWatermark() {
-  const saveW = () => { try { localStorage.setItem('caselab-watermark', JSON.stringify({ size: +$('wmSize').value, opacity: +$('wmOpacity').value / 100, move: $('wmMove').value })); } catch (e) { /* not saved */ } };
+  const saveW = () => {
+    const w = { size: +$('wmSize').value / 100, opacity: +$('wmOpacity').value / 100, move: $('wmMove').value, every: +$('wmEvery').value };
+    try { localStorage.setItem('caselab-watermark', JSON.stringify(w)); } catch (e) { /* not saved */ }
+    $('wmEveryBox').classList.toggle('hidden', w.move !== 'move');
+    if (PV && PV.wm) PV.wm = w; // an open preview follows the change straight away
+  };
   $('wmOpacity').addEventListener('input', () => { $('wmOpVal').textContent = $('wmOpacity').value + '%'; saveW(); });
-  ['wmSize', 'wmMove'].forEach(id => $(id).addEventListener('change', saveW));
+  $('wmSize').addEventListener('input', () => { $('wmSizeVal').textContent = $('wmSize').value + '%'; saveW(); });
+  ['wmMove', 'wmEvery'].forEach(id => $(id).addEventListener('change', saveW));
   $('wmOn').addEventListener('change', async () => { const n = narr(); n.opts = { ...(n.opts || {}), wm: $('wmOn').checked }; await X.save(); });
   $('wmFile').addEventListener('change', async e => {
     const file = e.target.files[0]; e.target.value = '';
