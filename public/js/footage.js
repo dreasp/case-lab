@@ -138,15 +138,20 @@ let handleWarned = false;
 async function putHandle(k, h) {
   memHandles.set(k, h);
   if (self.__caselabMemoryHandles) return;
-  await localStore.putFile(k, h);
-  if (!(await localStore.getFile(k)) && !handleWarned) {
-    handleWarned = true;
-    alert('Chrome could not save the link to your files (its storage for this site may be full). Everything works until you close or refresh this page. After that, choose the case folder again.');
-  }
+  await localStore.putLink(k, h);
+  if (await localStore.getLink(k)) return;
+  await localStore.putFile(k, h); // older place, as a second try
+  if ((await localStore.getFile(k)) || handleWarned) return;
+  handleWarned = true;
+  const err = localStore.lastError();
+  let space = '';
+  try { const e = await navigator.storage.estimate(); space = `Space used by this site: ${(e.usage / 1e9).toFixed(2)} GB of ${(e.quota / 1e9).toFixed(2)} GB allowed.`; } catch (e) { /* not available */ }
+  alert(`Chrome could not save the link to your files. Everything works until you close or refresh this page, so you can still click "Analyze all" now. After a refresh, choose the case folder again.\n\nDetails for Claude: ${err ? err.name + ': ' + err.message : 'no error given'}. ${space}`);
 }
-const getHandle = async k => memHandles.get(k) || (self.__caselabMemoryHandles ? undefined : localStore.getFile(k));
+const getHandle = async k => memHandles.get(k) || (self.__caselabMemoryHandles ? undefined : (await localStore.getLink(k)) || localStore.getFile(k));
 
 // Looks for a file by name anywhere in the folder (moved into a subfolder, or a folder renamed)
+const LINK_ERR = /not linked|link to the case folder|no longer in the folder|could not be read|Find it/i;
 async function findByName(dir, name, prefix = '', depth = 0) {
   for await (const [n, h] of dir.entries()) {
     if (h.kind === 'file' && n === name) return { h, path: prefix + n };
@@ -266,13 +271,16 @@ async function pickFolder() {
   $('folderName').textContent = 'Reading folder…';
   const { out, skipped } = await scanFolder(dir);
   const added = addRecords(out);
+  for (const f of cur.files) if (f.status === 'error' && LINK_ERR.test(f.error || '')) { f.status = 'new'; f.error = null; }
   await save();
   await renderCase();
   await refreshCases();
   await new Promise(r => requestAnimationFrame(() => setTimeout(r, 50))); // let the screen update first
   const kinds = [...new Set(skipped.map(n => (n.split('.').pop() || '').toUpperCase()))].slice(0, 6).join(', ');
   const conv = out.filter(r => (r.type === 'video' && !NATIVE_VIDEO.test(r.name)) || (r.type === 'audio' && !NATIVE_AUDIO.test(r.name))).length;
-  alert(`Added ${added} file${added === 1 ? '' : 's'} from "${dir.name}".` +
+  const left = cur.files.filter(f => f.status !== 'done').length;
+  alert((added ? `Added ${added} file${added === 1 ? '' : 's'} from "${dir.name}".` : `Linked "${dir.name}" again. Its files were already in this case, so nothing was added twice.`) +
+    (left ? `\n\n${left} file${left === 1 ? ' is' : 's are'} not analyzed yet: click "Analyze all" to continue.` : '') +
     (conv ? `\n\n${conv} of them (like WMV) will be converted automatically during analysis; that part is a bit slower.` : '') +
     (skipped.length ? `\n\n${skipped.length} file(s) were skipped (${kinds}). Supported: videos (MP4, MOV, WMV, AVI, MPG, MKV...), audio (WAV, MP3, M4A, WMA...), photos (JPG, PNG, WEBP) and PDF documents. iPhone HEIC photos need converting to JPG first.` : ''));
 }
@@ -396,7 +404,7 @@ async function renderFiles() {
       <td>${f.type}</td>
       <td class="mono">${len}${mb(f.size || 0)}</td>
       <td>${st}</td>
-      <td><div class="row-btns">${f.status === 'error' && /not linked|link to the case folder|no longer in the folder|could not be read|Find it/i.test(f.error || '') ? '<button class="btn small" data-act="find" type="button" title="Pick this file on your computer">Find it</button>' : ''}<button class="btn small ghost" data-act="remove" type="button" title="Remove from this case (your file is not deleted)">✕</button></div></td>
+      <td><div class="row-btns">${f.status === 'error' && LINK_ERR.test(f.error || '') ? '<button class="btn small" data-act="find" type="button" title="Pick this file on your computer">Find it</button>' : ''}<button class="btn small ghost" data-act="remove" type="button" title="Remove from this case (your file is not deleted)">✕</button></div></td>
     </tr>`;
   }).join('') || '<tr><td colspan="6" class="muted">No files yet. Choose the case folder or drop files here.</td></tr>';
   renderMeta();

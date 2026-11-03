@@ -32,6 +32,40 @@ async function tx(store, mode, fn) {
     });
   } catch (e) {
     console.warn('Storage problem:', e);
+    lastError = e;
+    return undefined;
+  }
+}
+let lastError = null;
+
+// Links to your folders and files live in their own small database, so a problem with the big
+// one (full, or damaged) doesn't lose them
+let linkDb = null;
+function links() {
+  if (!linkDb) {
+    linkDb = new Promise((resolve, reject) => {
+      const req = indexedDB.open('case-lab-links', 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('links');
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    linkDb.catch(() => { linkDb = null; });
+  }
+  return linkDb;
+}
+async function linkTx(mode, fn) {
+  try {
+    const d = await links();
+    return await new Promise((resolve, reject) => {
+      const t = d.transaction('links', mode);
+      const r = fn(t.objectStore('links'));
+      t.oncomplete = () => resolve(r && 'result' in r ? r.result : undefined);
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error);
+    });
+  } catch (e) {
+    console.warn('Link storage problem:', e);
+    lastError = e;
     return undefined;
   }
 }
@@ -48,4 +82,7 @@ export const store = {
   },
   putFile: (key, blob) => tx('files', 'readwrite', s => s.put(blob, key)),
   getFile: key => tx('files', 'readonly', s => s.get(key)),
+  putLink: (key, h) => linkTx('readwrite', s => s.put(h, key)),
+  getLink: key => linkTx('readonly', s => s.get(key)),
+  lastError: () => lastError,
 };
