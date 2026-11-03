@@ -451,3 +451,5 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .wm-thumb { width: 44px; height: 44px; object-fit: contain; border-radius: 6px; background: #000; }
 .wm-box select { background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 13px; }
 .fp-wm { position: absolute; pointer-events: none; height: auto; }
+#newCasePanel { max-width: 1100px; }
+#newCasePanel .ctx-field { margin-top: 10px; }

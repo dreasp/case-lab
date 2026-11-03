@@ -1031,15 +1031,23 @@ function wire() {
   initFinish({ cur: () => cur, save, api, esc, fmtH, fileById, getLocalFile, linkOriginal, signedUrls, speakerMap, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
   initStory({ cur: () => cur, contextText, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, openViewer, speakerMap, refreshUsage, NATIVE_VIDEO });
   $('newCase').addEventListener('click', () => { if (running) return alert('Wait for the analysis to finish or press Stop first.'); showNew(); $('caseTitleInput').focus(); });
-  $('caseCreate').addEventListener('click', async () => {
+  const NEW_CTX = [['who', 'newWho'], ['files', 'newFiles'], ['dates', 'newDates'], ['outcome', 'newOutcome']];
+  const createCase = async research => {
     const title = $('caseTitleInput').value.trim();
-    if (!title) return $('caseTitleInput').focus();
-    cur = { id: 'p' + Date.now().toString(36), kind: 'case', title, context: $('caseContextInput').value.trim(), created: Date.now(), updated: Date.now(), files: [], master: null };
+    if (!title) { alert('Give the case a title first.'); return $('caseTitleInput').focus(); }
+    const ctx = Object.fromEntries(NEW_CTX.map(([k, id]) => [k, $(id).value.trim()]));
+    cur = { id: 'p' + Date.now().toString(36), kind: 'case', title, ctx, context: $('caseContextInput').value.trim(), created: Date.now(), updated: Date.now(), files: [], master: null };
     await save();
     $('caseTitleInput').value = ''; $('caseContextInput').value = '';
-    renderCase();
+    NEW_CTX.forEach(([, id]) => { $(id).value = ''; });
+    await renderCase();
     refreshCases();
-  });
+    // straight to Case context, to check it (and see the online research) before adding footage
+    document.querySelector('#caseTabs .tab[data-tab="context"]').click();
+    if (research) { $('webResearch').scrollIntoView({ behavior: 'smooth', block: 'center' }); await webResearch(); }
+  };
+  $('caseCreate').addEventListener('click', () => createCase(false));
+  $('caseCreateResearch').addEventListener('click', () => createCase(true));
 
   // rename
   const startRename = () => { $('caseTitleEditInput').value = cur.title; $('caseTitle').classList.add('hidden'); $('caseTitleEdit').classList.remove('hidden'); $('caseTitleEditInput').select(); };

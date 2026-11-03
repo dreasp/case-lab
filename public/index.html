@@ -195,10 +195,24 @@
           <label class="field">Case title
             <input id="caseTitleInput" placeholder="e.g. Ernesto Miranda: Phoenix 1963">
           </label>
-          <label class="field">Case context
-            <textarea id="caseContextInput" rows="7" placeholder="Names and roles exactly as they should be spelled, plus anything you already know. For example:&#10;Ernesto Miranda: suspect&#10;Carroll Cooley, Wilfred Young: Phoenix PD detectives&#10;The victim is an 18-year-old woman (do not name her)&#10;Incident: March 3, 1963, Phoenix, Arizona"></textarea>
-          </label>
-          <button id="caseCreate" class="btn primary">Create case</button>
+          <p class="muted small-text">Case context: everything here is given to the AI when it analyzes files, builds the research and writes the narration. Fill in what you know now: it is the best way to avoid mix-ups and redoing work. Write names exactly as they should be spelled. You can change all of it later on the Case context tab.</p>
+          <div class="ctx-grid">
+            <label class="ctx-field"><span>Who's who</span>
+              <textarea id="newWho" rows="5" placeholder="John Doe: suspect, the victim's husband&#10;Jane Doe: the victim, 34&#10;Mary Smith (also spelled Mari): Jane's sister, called 911&#10;Detective Brown: lead detective, county sheriff's office"></textarea></label>
+            <label class="ctx-field"><span>Which file is which</span>
+              <textarea id="newFiles" rows="5" placeholder="Axon_Body_1: bodycam of the first officer on scene&#10;Interview_Rm_2: John's interview room&#10;Interview_Rm_1: Mary's interview room, John is never in it&#10;Interview_Rm_1_Pip: same room as Interview_Rm_1, second angle"></textarea></label>
+            <label class="ctx-field"><span>Dates and times</span>
+              <textarea id="newDates" rows="4" placeholder="Incident: March 3, 2024, about 22:15, Tampa, Florida&#10;911 call: March 3, 2024, 22:20 (not the date in the file name)"></textarea></label>
+            <label class="ctx-field"><span>Outcome</span>
+              <textarea id="newOutcome" rows="4" placeholder="Charges, plea or verdict, sentence and dates, as far as you know them&#10;e.g. Charged with second-degree murder, found guilty June 2025, sentenced to life"></textarea></label>
+          </div>
+          <label class="ctx-field"><span>Other notes</span>
+            <textarea id="caseContextInput" rows="3" placeholder="Anything else: spellings, things not to mention, background you already know"></textarea></label>
+          <div class="case-actions">
+            <button id="caseCreate" class="btn primary" type="button">Create case</button>
+            <button id="caseCreateResearch" class="btn" type="button">Create case and research it online</button>
+            <span class="muted small-text">The online research looks up the victim, the suspect, what happened and how it ended in news and court sources (about a cent). You can check and edit it on the Case context tab.</span>
+          </div>
         </div>
 
         <!-- Case -->
