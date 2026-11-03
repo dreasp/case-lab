@@ -453,3 +453,4 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .fp-wm { position: absolute; pointer-events: none; height: auto; }
 #newCasePanel { max-width: 1100px; }
 #newCasePanel .ctx-field { margin-top: 10px; }
+.row-btns{display:flex;gap:6px;justify-content:flex-end}

@@ -132,13 +132,41 @@ function renderMeta() {
 // Chrome remembers the case folder (and dropped files) in this browser's storage.
 // (__caselabMemoryHandles is only used by automated tests, whose browser can't store folder links.)
 const memHandles = new Map();
-const putHandle = (k, h) => (self.__caselabMemoryHandles ? (memHandles.set(k, h), Promise.resolve()) : localStore.putFile(k, h));
-const getHandle = k => (self.__caselabMemoryHandles ? Promise.resolve(memHandles.get(k)) : localStore.getFile(k));
+// Links are also kept in memory for this session, in case Chrome can't store them. Chrome then
+// failed silently, which made files "not linked" after a refresh.
+let handleWarned = false;
+async function putHandle(k, h) {
+  memHandles.set(k, h);
+  if (self.__caselabMemoryHandles) return;
+  await localStore.putFile(k, h);
+  if (!(await localStore.getFile(k)) && !handleWarned) {
+    handleWarned = true;
+    alert('Chrome could not save the link to your files (its storage for this site may be full). Everything works until you close or refresh this page. After that, choose the case folder again.');
+  }
+}
+const getHandle = async k => memHandles.get(k) || (self.__caselabMemoryHandles ? undefined : localStore.getFile(k));
+
+// Looks for a file by name anywhere in the folder (moved into a subfolder, or a folder renamed)
+async function findByName(dir, name, prefix = '', depth = 0) {
+  for await (const [n, h] of dir.entries()) {
+    if (h.kind === 'file' && n === name) return { h, path: prefix + n };
+    if (h.kind === 'directory' && depth < 5) { const r = await findByName(h, name, prefix + n + '/', depth + 1); if (r) return r; }
+  }
+  return null;
+}
 async function folderHandle() { return cur ? getHandle(cur.id + ':dir') : null; }
 
 async function checkAccess() {
   const bar = $('accessBar');
   const dir = await folderHandle();
+  const lost = !dir && cur.files.some(f => !f.handleKey && f.path && f.status !== 'done');
+  if (lost) {
+    $('accessText').textContent = `The link to your case folder${cur.folderName ? ' "' + cur.folderName + '"' : ''} is missing on this computer, so files that aren't analyzed yet can't be read. Choose the same folder again (nothing gets added twice).`;
+    $('accessBtn').textContent = 'Choose case folder';
+    bar.classList.remove('hidden');
+    return 'missing';
+  }
+  $('accessBtn').textContent = 'Allow access';
   const needs = cur.files.some(f => !f.handleKey && f.path) && dir;
   if (!dir || !needs) { bar.classList.add('hidden'); return 'granted'; }
   const state = await dir.queryPermission({ mode: 'read' }).catch(() => 'denied');
@@ -150,7 +178,7 @@ async function checkAccess() {
 
 async function requestAccess() {
   const dir = await folderHandle();
-  if (!dir) return false;
+  if (!dir) { await pickFolder(); return !!(await folderHandle()); }
   const st = await dir.requestPermission({ mode: 'read' }).catch(() => 'denied');
   await checkAccess();
   return st === 'granted';
@@ -188,12 +216,20 @@ async function getLocalFile(f) {
     let st = await dir.queryPermission({ mode: 'read' }).catch(() => 'denied');
     if (st !== 'granted') st = await dir.requestPermission({ mode: 'read' }).catch(() => 'denied');
     if (st !== 'granted') throw new Error('Click "Allow access" so the app can read your footage folder.');
-    let h = dir;
-    const parts = f.path.split('/');
-    for (let i = 0; i < parts.length - 1; i++) h = await h.getDirectoryHandle(parts[i]);
-    return (await h.getFileHandle(parts.at(-1))).getFile();
+    try {
+      let h = dir;
+      const parts = f.path.split('/');
+      for (let i = 0; i < parts.length - 1; i++) h = await h.getDirectoryHandle(parts[i]);
+      return await (await h.getFileHandle(parts.at(-1))).getFile();
+    } catch (e) {
+      if (e && e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') throw new Error(`The folder "${dir.name}" could not be read (${e.message}). If it's on an external drive, check that the drive is plugged in, then choose the case folder again.`);
+      const found = await findByName(dir, f.name).catch(() => null);
+      if (found) { f.path = found.path; await save(); return found.h.getFile(); }
+      throw new Error(`"${f.name}" is no longer in the folder "${dir.name}" (moved or renamed). Click "Find it" to pick it.`);
+    }
   }
-  throw new Error('The original file is not linked on this computer. Choose the case folder again, or add the file again.');
+  if (f.path) throw new Error('The link to the case folder is missing on this computer. Click "Choose case folder" and pick the same folder (nothing gets added twice), or click "Find it".');
+  throw new Error('The original file is not linked on this computer. Click "Find it" to pick it, or choose the case folder again.');
 }
 
 async function scanFolder(dir, prefix = '', depth = 0, out = [], skipped = []) {
@@ -360,7 +396,7 @@ async function renderFiles() {
       <td>${f.type}</td>
       <td class="mono">${len}${mb(f.size || 0)}</td>
       <td>${st}</td>
-      <td><button class="btn small ghost" data-act="remove" type="button" title="Remove from this case (your file is not deleted)">✕</button></td>
+      <td><div class="row-btns">${f.status === 'error' && /not linked|link to the case folder|no longer in the folder|could not be read|Find it/i.test(f.error || '') ? '<button class="btn small" data-act="find" type="button" title="Pick this file on your computer">Find it</button>' : ''}<button class="btn small ghost" data-act="remove" type="button" title="Remove from this case (your file is not deleted)">✕</button></div></td>
     </tr>`;
   }).join('') || '<tr><td colspan="6" class="muted">No files yet. Choose the case folder or drop files here.</td></tr>';
   renderMeta();
@@ -808,8 +844,10 @@ async function describePhotos() {
 async function analyzeAll() {
   if (running) return;
   // Ask for folder access first: Chrome only shows its question right after a click
-  if (cur.files.some(f => f.path && !f.handleKey && !f.analysis) && (await checkAccess()) !== 'granted' && !(await requestAccess())) {
-    return alert('Case Lab needs your OK to read the footage folder. Click "Analyze all" again and choose "Allow".');
+  if (cur.files.some(f => f.path && !f.handleKey && !f.analysis)) {
+    const st = await checkAccess();
+    if (st === 'missing') return alert('The link to your case folder is missing on this computer. Click "Choose case folder" (in the yellow bar) and pick the same folder, then click "Analyze all" again.');
+    if (st !== 'granted' && !(await requestAccess())) return alert('Case Lab needs your OK to read the footage folder. Click "Analyze all" again and choose "Allow".');
   }
   for (const f of cur.files.filter(x => x.handleKey && x.status !== 'done' && !sessionFiles.has(x.id))) {
     const h = await getHandle(f.handleKey);
@@ -1114,6 +1152,11 @@ function wire() {
     const tr = e.target.closest('tr[data-id]');
     if (!tr) return;
     const f = fileById(tr.dataset.id);
+    if (e.target.dataset.act === 'find') {
+      if (running) return alert('Wait for the analysis to finish or press Stop first.');
+      if (await linkOriginal(f)) { f.status = 'new'; f.error = null; await save(); renderFiles(); }
+      return;
+    }
     if (e.target.dataset.act === 'remove') {
       if (running) return alert('Wait for the analysis to finish or press Stop first.');
       if (!confirm(`Remove "${f.name}" from this case? Your file stays on your computer; its analysis is removed.`)) return;
