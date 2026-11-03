@@ -453,4 +453,7 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .fp-wm { position: absolute; pointer-events: none; height: auto; }
 #newCasePanel { max-width: 1100px; }
 #newCasePanel .ctx-field { margin-top: 10px; }
-.row-btns{display:flex;gap:6px;justify-content:flex-end}
+.file-btns{display:flex;gap:6px;justify-content:flex-end}
+.sp-fix{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+.sp-fix .btn{padding:4px 9px}
+.sp-fix .sep{width:10px}

@@ -404,7 +404,7 @@ async function renderFiles() {
       <td>${f.type}</td>
       <td class="mono">${len}${mb(f.size || 0)}</td>
       <td>${st}</td>
-      <td><div class="row-btns">${f.status === 'error' && LINK_ERR.test(f.error || '') ? '<button class="btn small" data-act="find" type="button" title="Pick this file on your computer">Find it</button>' : ''}<button class="btn small ghost" data-act="remove" type="button" title="Remove from this case (your file is not deleted)">✕</button></div></td>
+      <td><div class="file-btns">${f.status === 'error' && LINK_ERR.test(f.error || '') ? '<button class="btn small" data-act="find" type="button" title="Pick this file on your computer">Find it</button>' : ''}<button class="btn small ghost" data-act="remove" type="button" title="Remove from this case (your file is not deleted)">✕</button></div></td>
     </tr>`;
   }).join('') || '<tr><td colspan="6" class="muted">No files yet. Choose the case folder or drop files here.</td></tr>';
   renderMeta();

@@ -291,6 +291,7 @@
               <button id="storyPlay" class="btn ghost" type="button">Preview from start</button>
               <button id="storyScript" class="btn ghost" type="button">Download script</button>
               <button id="storyCopy" class="btn ghost" type="button">Copy narration</button>
+              <button id="storySentences" class="btn ghost" type="button" title="Free: uses the transcript timing. Moves clip starts and ends so nobody is cut off mid-sentence">Fix cut-off sentences</button>
               <div class="grow"></div>
               <span id="storyTotals" class="mono muted small-text"></span>
             </div>
@@ -466,6 +467,16 @@
     </div>
     <div class="sp-bar"><div id="spFill"></div></div>
     <p id="spNote" class="muted small-text"></p>
+    <div id="spFix" class="sp-fix small-text hidden">
+      <b>Adjust this clip:</b>
+      Start <button class="btn ghost small" data-fx="start" data-d="-1" type="button">−1s</button><button class="btn ghost small" data-fx="start" data-d="1" type="button">+1s</button>
+      <span class="sep"></span>
+      End <button class="btn ghost small" data-fx="end" data-d="-1" type="button">−1s</button><button class="btn ghost small" data-fx="end" data-d="1" type="button">+1s</button>
+      <span class="sep"></span>
+      <button class="btn small" data-fx="sentence" type="button" title="Moves the start back to where the sentence begins and the end to where the sentence finishes">Finish the sentence</button>
+      <button class="btn ghost small" data-fx="ending" type="button" title="Plays the last 6 seconds of this clip again">Replay the ending</button>
+      <span id="spFixNote" class="muted"></span>
+    </div>
   </dialog>
 
   <!-- Final video preview -->
