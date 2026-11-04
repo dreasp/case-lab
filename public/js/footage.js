@@ -626,7 +626,7 @@ async function ensureCopies(f) {
         setStatus(f, 'reading', 0);
         // If the fast reader can't handle this particular file, the converter takes over
         try { r = await makeCopies(file, fr => { live.set(f.id, { frac: fr }); renderSoon(); }); }
-        catch (e) { if (stopFlag) throw e; r = await converted(file, f, true); }
+        catch (e) { if (stopFlag) throw e; r = await converted(file, f, true); f.needsConvert = true; }
       } else {
         r = await converted(file, f, true);
       }

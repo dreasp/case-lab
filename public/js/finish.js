@@ -12,6 +12,16 @@ const $ = id => document.getElementById(id);
 const WPS = 2.6;
 const LEAD = 0.15, TAIL = 0.4;      // short pauses around each narration part
 const NATIVE = /\.(mp4|mov|m4v)$/i;
+// A file the export can read directly: named MP4/MOV and really an MP4/MOV inside. Some police
+// systems (Hikvision and others) save files named .mp4 that are really another format; those
+// are converted like WMV.
+const direct = f => NATIVE.test(f.name) && !f.needsConvert;
+async function isRealMp4(file) {
+  try {
+    const b = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+    return ['ftyp', 'moov', 'mdat', 'free', 'wide', 'skip', 'pnot'].includes(String.fromCharCode(...b.slice(4, 8)));
+  } catch (e) { return false; }
+}
 const label = f => f ? (f.path || f.name) : 'missing file';
 const fmt1 = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = t - m * 60; return `${m}:${s.toFixed(1).padStart(4, '0')}`; };
 const UNDER = { next: 'Lead-up to the next clip', prev: 'What comes after the last clip', still: 'Still frame of the next clip', black: 'Black screen' };
@@ -219,7 +229,7 @@ function buildPlan(c, matched) {
       const f = X.fileById(s.file);
       if (!f) continue;
       const dur = Math.max(0.5, s.end - s.start);
-      files.add(f.id); if (!NATIVE.test(f.name) || f.type === 'audio') convert.add(f.id);
+      files.add(f.id); if (!direct(f) || f.type === 'audio') convert.add(f.id);
       const pic = (s.media || []).length ? { own: s.media } : f.type === 'video' ? { file: f, from: s.start } : { card: f.analysis && f.analysis.camera ? cap(f.analysis.camera) : 'Audio recording', sub: label(f) };
       out.push({ kind: 'clip', t0: t, dur, file: f, from: s.start, pic, sound: [{ file: f, from: s.start, gain: 1 }], seg: s });
       clips++;
@@ -241,7 +251,7 @@ function buildPlan(c, matched) {
       if (prev && prev.file === next.file && prev.end > from) return false; // would repeat what was just shown
       pic = f.type === 'video' ? { file: f, from } : { card: cap((f.analysis && f.analysis.camera) || 'Audio recording'), sub: label(f) };
       sound = [{ file: f, from, gain: duck }];
-      files.add(f.id); if (!NATIVE.test(f.name) || f.type === 'audio') convert.add(f.id);
+      files.add(f.id); if (!direct(f) || f.type === 'audio') convert.add(f.id);
       return true;
     };
     const tryPrev = () => {
@@ -252,7 +262,7 @@ function buildPlan(c, matched) {
       if (next && next.file === prev.file && next.start < from + dur && next.start >= from) return false;
       pic = f.type === 'video' ? { file: f, from } : { card: cap((f.analysis && f.analysis.camera) || 'Audio recording'), sub: label(f) };
       sound = [{ file: f, from, gain: duck }];
-      files.add(f.id); if (!NATIVE.test(f.name) || f.type === 'audio') convert.add(f.id);
+      files.add(f.id); if (!direct(f) || f.type === 'audio') convert.add(f.id);
       return true;
     };
     const still = () => {
@@ -261,7 +271,7 @@ function buildPlan(c, matched) {
       const f = X.fileById(k.file);
       if (f.type !== 'video') { pic = { card: cap((f.analysis && f.analysis.camera) || 'Audio recording'), sub: label(f) }; return; }
       pic = { file: f, from: next ? next.start : Math.max(0, prev.end - 0.1), freeze: true };
-      files.add(f.id); if (!NATIVE.test(f.name)) convert.add(f.id);
+      files.add(f.id); if (!direct(f)) convert.add(f.id);
     };
     const own = s.media || [];
     if (own.length) pic = { own };
@@ -510,7 +520,8 @@ async function exportVideo() {
     for (const [fid, ranges] of used) {
       const f = X.fileById(fid);
       const file = found.get(fid);
-      if (NATIVE.test(f.name) && f.type === 'video') {
+      if (direct(f) && f.type === 'video' && !(await isRealMp4(file))) { f.needsConvert = true; await X.save(); }
+      if (direct(f) && f.type === 'video') {
         sources[fid] = { blob: file, name: label(f) };
         locate.set(fid, t => ({ sid: fid, from: t }));
         continue;
@@ -623,8 +634,12 @@ const PLAYABLE_AUDIO = /\.(mp3|wav|m4a|aac|ogg)$/i;
 async function previewMedia(f) {
   if (PV.media.has(f.id)) return PV.media.get(f.id);
   let m = null;
-  const local = async () => { const file = await X.getLocalFile(f); const u = URL.createObjectURL(file); PV.urls.push(u); return u; };
-  if (f.type === 'video' && NATIVE.test(f.name)) { try { m = { video: await local(), audio: null, note: '' }; } catch (e) { /* copies below */ } }
+  const local = async () => {
+    const file = await X.getLocalFile(f);
+    if (f.type === 'video' && !(await isRealMp4(file))) { f.needsConvert = true; X.save(); throw new Error('not MP4 inside'); }
+    const u = URL.createObjectURL(file); PV.urls.push(u); return u;
+  };
+  if (f.type === 'video' && direct(f)) { try { m = { video: await local(), audio: null, note: '' }; } catch (e) { /* copies below */ } }
   if (!m && f.type === 'audio' && PLAYABLE_AUDIO.test(f.name)) { try { m = { video: null, audio: await local(), note: '' }; } catch (e) { /* below */ } }
   if (!m) {
     const [v, a] = await X.signedUrls([f.type === 'video' ? f.proxyKey : null, f.audioKey]);
