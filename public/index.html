@@ -208,6 +208,15 @@
           </div>
           <label class="ctx-field"><span>Other notes</span>
             <textarea id="caseContextInput" rows="3" placeholder="Anything else: spellings, things not to mention, background you already know"></textarea></label>
+          <div class="psych-box">
+            <label class="switch"><input type="checkbox" id="newPsychOn"> <span>Add a short psychological perspective near the end of the narration</span></label>
+            <div class="psych-opts">
+              <label>Length <select id="newPsychSecs"><option value="20">about 20 seconds</option><option value="30" selected>about 30 seconds</option><option value="45">about 45 seconds</option></select></label>
+              <label class="ctx-field"><span>Angle (optional)</span>
+                <textarea id="newPsychNotes" rows="2" placeholder="e.g. coercive control, why people confess, how escalation works"></textarea></label>
+            </div>
+            <span class="muted small-text">The AI adds one short part after the outcome. It stays general (what experts say about this kind of behavior) and doesn't diagnose real people. The video's total length stays the same.</span>
+          </div>
           <div class="case-actions">
             <button id="caseCreate" class="btn primary" type="button">Create case</button>
             <button id="caseCreateResearch" class="btn" type="button">Create case and research it online</button>
@@ -373,6 +382,15 @@
             </div>
             <label class="ctx-field"><span>Other notes</span>
               <textarea id="caseContext" rows="4" placeholder="Anything else: spellings, things not to mention, background you already know"></textarea></label>
+          <div class="psych-box">
+            <label class="switch"><input type="checkbox" id="ctxPsychOn"> <span>Add a short psychological perspective near the end of the narration</span></label>
+            <div class="psych-opts">
+              <label>Length <select id="ctxPsychSecs"><option value="20">about 20 seconds</option><option value="30" selected>about 30 seconds</option><option value="45">about 45 seconds</option></select></label>
+              <label class="ctx-field"><span>Angle (optional)</span>
+                <textarea id="ctxPsychNotes" rows="2" placeholder="e.g. coercive control, why people confess, how escalation works"></textarea></label>
+            </div>
+            <span class="muted small-text">The AI adds one short part after the outcome. It stays general (what experts say about this kind of behavior) and doesn't diagnose real people. The video's total length stays the same.</span>
+          </div>
             <div class="case-actions">
               <button id="saveContext" class="btn primary" type="button">Save context</button>
               <span id="contextSaved" class="muted small-text"></span>

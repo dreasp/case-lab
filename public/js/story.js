@@ -135,6 +135,7 @@ async function build() {
     const sensitiveAt = (f, m) => ((f.analysis.sensitive || []).some(s => s.start < m.end && s.end > m.start));
     const r = await X.api('case/story', {
       title: c.title, context: X.contextText(c), style: st.style, targetMin: st.targetMin,
+      psych: c.psych && c.psych.on ? { secs: c.psych.secs || 30, notes: c.psych.notes || '' } : null,
       research: { overview: c.master.overview, story_beats: (c.master.story_beats || []).map(b => ({ title: b.title, description: b.description })), key_quotes: (c.master.key_quotes || []).map(q => ({ speaker: q.speaker, quote: q.quote })) },
       files: files.map(f => ({
         id: f.id, name: label(f), type: f.type, duration: f.duration, clock: f.analysis.clock_start, camera: f.analysis.camera,

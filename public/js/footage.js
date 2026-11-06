@@ -477,6 +477,10 @@ function renderContext() {
   const k = cur.ctx || {};
   for (const [key, id] of CTX) $(id).value = k[key] || '';
   $('caseContext').value = cur.context || '';
+  const ps = cur.psych || {};
+  $('ctxPsychOn').checked = !!ps.on;
+  $('ctxPsychSecs').value = String(ps.secs || 30);
+  $('ctxPsychNotes').value = ps.notes || '';
   $('webText').value = cur.webText || '';
   $('webText').classList.toggle('hidden', !cur.webText);
   $('webResearch').textContent = cur.webText ? 'Research again' : 'Research the case online';
@@ -488,6 +492,7 @@ async function saveContext() {
   cur.ctx = cur.ctx || {};
   for (const [key, id] of CTX) cur.ctx[key] = $(id).value;
   cur.context = $('caseContext').value;
+  cur.psych = { on: $('ctxPsychOn').checked, secs: +$('ctxPsychSecs').value || 30, notes: $('ctxPsychNotes').value.trim() };
   if (!$('webText').classList.contains('hidden')) cur.webText = $('webText').value;
   await save();
 }
@@ -1082,10 +1087,11 @@ function wire() {
     const title = $('caseTitleInput').value.trim();
     if (!title) { alert('Give the case a title first.'); return $('caseTitleInput').focus(); }
     const ctx = Object.fromEntries(NEW_CTX.map(([k, id]) => [k, $(id).value.trim()]));
-    cur = { id: 'p' + Date.now().toString(36), kind: 'case', title, ctx, context: $('caseContextInput').value.trim(), created: Date.now(), updated: Date.now(), files: [], master: null };
+    cur = { id: 'p' + Date.now().toString(36), kind: 'case', title, ctx, context: $('caseContextInput').value.trim(), psych: { on: $('newPsychOn').checked, secs: +$('newPsychSecs').value || 30, notes: $('newPsychNotes').value.trim() }, created: Date.now(), updated: Date.now(), files: [], master: null };
     await save();
     $('caseTitleInput').value = ''; $('caseContextInput').value = '';
     NEW_CTX.forEach(([, id]) => { $(id).value = ''; });
+    $('newPsychOn').checked = false; $('newPsychSecs').value = '30'; $('newPsychNotes').value = '';
     await renderCase();
     refreshCases();
     // straight to Case context, to check it (and see the online research) before adding footage
@@ -1116,7 +1122,7 @@ function wire() {
   }));
 
   $('webResearch').addEventListener('click', webResearch);
-  ['ctxWho', 'ctxFiles', 'ctxDates', 'ctxOutcome', 'caseContext', 'webText'].forEach(id => $(id).addEventListener('change', saveContext));
+  ['ctxWho', 'ctxFiles', 'ctxDates', 'ctxOutcome', 'caseContext', 'webText', 'ctxPsychOn', 'ctxPsychSecs', 'ctxPsychNotes'].forEach(id => $(id).addEventListener('change', saveContext));
   $('saveContext').addEventListener('click', async () => {
     await saveContext();
     $('contextSaved').textContent = 'Saved';

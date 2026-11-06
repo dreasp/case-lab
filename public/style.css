@@ -457,3 +457,8 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .sp-fix{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
 .sp-fix .btn{padding:4px 9px}
 .sp-fix .sep{width:10px}
+
+.psych-box { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line, #333); border-radius: 10px; display: grid; gap: 8px; }
+.psych-opts { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; }
+.psych-opts > label:first-child { display: grid; gap: 6px; font-size: 13px; }
+.psych-opts .ctx-field { flex: 1 1 260px; margin-top: 0; }

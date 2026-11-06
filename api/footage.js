@@ -365,7 +365,7 @@ const STORY_STYLE = `NARRATION STYLE (the channel's own standards):
 
 router.post('/case/story', async (req, res) => {
   try {
-    const { title, context, style, targetMin = 30, research, files } = req.body || {};
+    const { title, context, style, targetMin = 30, research, files, psych } = req.body || {};
     const target = Math.max(5, Math.min(120, Number(targetMin) || 30));
     const fileText = (files || []).map(f => `=== FILE ${f.id}: ${f.name} (${f.type}, ${fmtT(f.duration || 0)} long${f.clock ? ', on-screen clock at start ' + f.clock : ''}${f.camera ? ', ' + f.camera : ''})
 Speakers: ${Object.entries(f.speakers || {}).map(([k, v]) => k + ' = ' + v).join(', ')}
@@ -373,6 +373,13 @@ Summary: ${f.summary || ''}
 Moments:
 ${(f.moments || []).map(m => `- [${fmtT(m.start)} to ${fmtT(m.end)}] (${m.importance || '?'}/5${m.sensitive ? ', SENSITIVE' : ''}) ${m.title}: ${m.description}${m.quote ? ` Quote: "${String(m.quote).slice(0, 300)}"` : ''}`).join('\n')}`).join('\n\n').slice(0, 400000);
     const r = research || {};
+    const pSecs = psych ? Math.max(10, Math.min(90, Number(psych.secs) || 30)) : 0;
+    const psychText = psych ? `
+PSYCHOLOGICAL PERSPECTIVE (the creator turned this on):
+- After the case outcome has been told, add ONE separate narration part of about ${pSecs} seconds (about ${Math.round(pSecs * 2.6)} words) that gives a short psychological perspective on what happened, then the closing sign-off part.
+- Keep it general and grounded: what psychology and behavioral research describe about this kind of situation (for example coercion, escalation, why people confess or stay silent), tied to behavior visible in this case's footage and context. Say "researchers describe" or "experts note", never invent studies or quotes, and do not diagnose or label any real named person.
+- Do not add anything to the video's length: keep the total at the target minutes by making other narration parts slightly shorter.${psych.notes ? `\n- The creator wants this angle: """${String(psych.notes).slice(0, 600)}"""` : ''}
+` : '';
     const prompt = `${STYLE}
 
 You are the editor of a long-form true crime YouTube video built mostly from real footage (bodycam, interrogation, 911 calls), with short narration in between, in the style of channels like JCS.
@@ -382,7 +389,7 @@ CASE CONTEXT (written by the creator, trust it over the footage analysis):
 """${String(context || '').slice(0, 24000)}"""
 
 ${STORY_STYLE}
-${style ? `\nEXTRA STYLE NOTES FROM THE CREATOR:\n"""${String(style).slice(0, 3000)}"""\n` : ''}
+${style ? `\nEXTRA STYLE NOTES FROM THE CREATOR:\n"""${String(style).slice(0, 3000)}"""\n` : ''}${psychText}
 CASE RESEARCH (already put together from all files):
 Overview: ${r.overview || ''}
 Story beats:
