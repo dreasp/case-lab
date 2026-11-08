@@ -105,8 +105,14 @@ async function openSource(f, a, b) {
     } catch (e) { /* try the analysis copy */ }
   }
   // 3) the small analysis copy in the cloud
+  // (downloaded first: a picture read straight from the cloud can't be checked for faces)
   const [u] = f.proxyKey ? await X.signedUrls([f.proxyKey]) : [];
-  if (await tryUrl(u)) return 'The original file is not linked on this computer, so the small analysis copy (1 picture a second) is used. Small faces may be missed: link the original (Files tab, "Find it") for better results.';
+  let local = null;
+  if (u) {
+    status('Downloading the analysis copy…');
+    try { const r = await fetch(u); if (r.ok) { local = URL.createObjectURL(await r.blob()); F.urls.push(local); } } catch (e) { /* not reachable */ }
+  }
+  if (await tryUrl(local)) return 'The original file is not linked on this computer, so the small analysis copy (1 picture a second) is used. Small faces may be missed: link the original (Files tab, "Find it") for better results.';
   throw new Error('The video could not be opened. Link the original file on the Files tab first.');
 }
 

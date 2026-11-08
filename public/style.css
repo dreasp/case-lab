@@ -484,3 +484,5 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .seg-card .card-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
 .seg-card .card-fields input,.seg-card .card-fields select{width:100%}
 .story-trans-def select{margin-left:4px}
+
+.fd-list li.muted{display:block}
