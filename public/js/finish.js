@@ -975,6 +975,23 @@ export function wireFinalPreview() {
 }
 
 // Real length of a narration part on screen (from your recording), or null before it's uploaded
+// Which stretches of each video file the video shows: clips and the footage under narration.
+// { fileId: [{ a, b, segId, kind }] }. Uses the recorded narration's timing, or an estimate.
+export function footageRanges(c) {
+  if (!X || !c || !c.story) return {};
+  let m = matchParts(c);
+  if (!m) m = narrParts(c).map(p => ({ id: p.id, a0: 0, a1: Math.max(1, p.text.split(/\s+/).filter(Boolean).length / WPS), ok: true }));
+  let plan;
+  try { plan = buildPlan(c, m); } catch (e) { return {}; }
+  const out = {};
+  for (const sg of plan.segs) {
+    if (!sg.pic || !sg.pic.file || sg.pic.file.type !== 'video') continue;
+    const a = sg.pic.from, b = sg.pic.freeze ? a + 0.3 : a + sg.dur;
+    (out[sg.pic.file.id] = out[sg.pic.file.id] || []).push({ a, b, segId: sg.seg.id, kind: sg.kind });
+  }
+  return out;
+}
+
 export function partLength(c, id) {
   const m = matchParts(c);
   const x = m && m.find(y => y.id === id);

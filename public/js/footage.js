@@ -7,7 +7,7 @@ import { cloudStore as store } from './cloud.js';
 import { store as localStore } from './store.js';
 import { caseChecks } from './checks.js';
 import { initStory, renderStory } from './story.js';
-import { initFinish, renderFinish } from './finish.js';
+import { initFinish, renderFinish, footageRanges } from './finish.js';
 import { initMedia } from './media.js';
 import { initFaces } from './faces.js';
 import { initWords } from './words.js';
@@ -1081,7 +1081,7 @@ function wire() {
   initWords({ api, putFile: (k, b) => store.putFile(k, b), getFile: k => store.getFile(k) });
   initMedia({ esc, fileById, getLocalFile, signedUrls, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
   initFinish({ cur: () => cur, save, api, esc, fmtH, fileById, getLocalFile, linkOriginal, signedUrls, speakerMap, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
-  initFaces({ esc, fmtH, save, getLocalFile, signedUrls, onFacesChanged: () => renderStory() });
+  initFaces({ esc, fmtH, save, getLocalFile, signedUrls, footageRanges: f => (footageRanges(cur)[f.id] || []), onFacesChanged: () => renderStory() });
   initStory({ cur: () => cur, contextText, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, openViewer, speakerMap, refreshUsage, NATIVE_VIDEO });
   $('newCase').addEventListener('click', () => { if (running) return alert('Wait for the analysis to finish or press Stop first.'); showNew(); $('caseTitleInput').focus(); });
   const NEW_CTX = [['who', 'newWho'], ['files', 'newFiles'], ['dates', 'newDates'], ['outcome', 'newOutcome']];

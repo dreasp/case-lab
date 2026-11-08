@@ -75,10 +75,13 @@ let F = null; // { f, a, b, video, cv, url, note }
 const cv = document.createElement('canvas');
 const cvx = cv.getContext('2d', { willReadFrequently: true });
 
+// Opens the video for the part a..b of the file. Remembers what worked, so moving to another part
+// of the same file is quick (only files the browser can't play need converting again).
 async function openSource(f, a, b) {
   const video = $('fdVideo');
-  const tryUrl = (url, from = 0) => new Promise(ok => {
+  const tryUrl = url => new Promise(ok => {
     if (!url) return ok(false);
+    if (video.src === url && video.readyState >= 2) return ok(true);
     let done = false;
     const end = v => { if (done) return; done = true; video.onloadeddata = video.onerror = null; ok(v); };
     video.onloadeddata = () => end(video.videoWidth > 0);
@@ -87,21 +90,26 @@ async function openSource(f, a, b) {
     setTimeout(() => end(false), 15000);
   });
   F.offset = 0;
+  F.coarse = false;
+  if (F.src === 'orig' && await tryUrl(F.origUrl)) return '';
+  if (F.src === 'proxy' && await tryUrl(F.proxyUrl)) { F.coarse = true; return F.proxyNote; }
   // 1) the original, if it's linked on this computer and the browser can play it
   const file = await X.getLocalFile(f).catch(() => null);
   if (file) {
-    const url = URL.createObjectURL(file);
-    F.urls.push(url);
-    if (await tryUrl(url)) return '';
+    if (F.src !== 'convert') {
+      const url = URL.createObjectURL(file);
+      F.urls.push(url);
+      if (await tryUrl(url)) { F.src = 'orig'; F.origUrl = url; return ''; }
+    }
     // 2) a format the browser can't play (WMV, police recorder files): convert just this part
     status('Converting this part of the file so it can be checked…');
     try {
       const { convertRange } = await import('./convert.js');
-      const blob = await convertRange(file, a, b - a, { video: true, onProgress: p => status(`Converting this part of the file so it can be checked… ${Math.round(p * 100)}%`) });
+      const blob = await convertRange(file, a, b - a + 0.5, { video: true, onProgress: p => status(`Converting this part of the file so it can be checked… ${Math.round(p * 100)}%`) });
       const u2 = URL.createObjectURL(blob);
       F.urls.push(u2);
       F.offset = a;
-      if (await tryUrl(u2)) return '';
+      if (await tryUrl(u2)) { F.src = 'convert'; return ''; }
     } catch (e) { /* try the analysis copy */ }
   }
   // 3) the small analysis copy in the cloud
@@ -112,7 +120,11 @@ async function openSource(f, a, b) {
     status('Downloading the analysis copy…');
     try { const r = await fetch(u); if (r.ok) { local = URL.createObjectURL(await r.blob()); F.urls.push(local); } } catch (e) { /* not reachable */ }
   }
-  if (await tryUrl(local)) return 'The original file is not linked on this computer, so the small analysis copy (1 picture a second) is used. Small faces may be missed: link the original (Files tab, "Find it") for better results.';
+  if (await tryUrl(local)) {
+    F.src = 'proxy'; F.proxyUrl = local; F.coarse = true;
+    F.proxyNote = 'The original file is not linked on this computer, so the small analysis copy (1 picture a second) is used. Small faces may be missed: link the original (Files tab, "Find it") for better results.';
+    return F.proxyNote;
+  }
   throw new Error('The video could not be opened. Link the original file on the Files tab first.');
 }
 
@@ -273,13 +285,109 @@ async function follow(box, t0) {
   }
 }
 
+// ---------- the same people in every other part that uses this file ----------
+// For each blurred person, starts from where they were last seen and follows them through every
+// other stretch of this file used in the video (other clips and the footage under narration).
+async function blurEverywhere() {
+  const { f } = F;
+  const data = faces(f);
+  const people = data.tracks.filter(t => data.blur[t.id]);
+  if (!people.length) return status('First tick "Blur" for the people you want hidden, then click this again.');
+  const ranges = (X.footageRanges ? X.footageRanges(f) : []).map(r => [Math.max(0, r.a - 0.5), Math.min(f.duration || r.b + 0.5, r.b + 0.5)]);
+  // only the stretches someone isn't followed through yet
+  const covers = (tr, a, b) => tr.pts.some(p => p[0] <= a + 1.2) && tr.pts.some(p => p[0] >= b - 1.2) && tr.pts.filter(p => p[0] >= a && p[0] <= b).length >= Math.max(1, (b - a) / 2.5);
+  const todo = ranges.filter(([a, b]) => people.some(tr => !covers(tr, a, b)));
+  if (!todo.length) return status('These people are already blurred in every part of the video that uses this file.');
+  stopFlag = false;
+  busy(true);
+  const total = todo.reduce((n, [a, b]) => n + (b - a), 0);
+  let done = 0;
+  try {
+    await detector();
+    for (const [a, b] of todo) {
+      await openSource(f, a, b);
+      const step = F.coarse ? 1 : STEP;
+      const who = people.filter(tr => !covers(tr, a, b));
+      // where each person was seen nearest to this stretch, and what they looked like there
+      const st = [];
+      for (const tr of who) {
+        const near = tr.pts.reduce((x, p) => (Math.min(Math.abs(p[0] - a), Math.abs(p[0] - b)) < Math.min(Math.abs(x[0] - a), Math.abs(x[0] - b)) ? p : x));
+        st.push({ tr, box: near.slice(1), pts: [], lost: 0, tpl: null, src: near[0] });
+      }
+      // the look of each person comes from the nearest moment they were seen (may be another stretch)
+      for (const x of st) {
+        if (x.src >= a - 0.01 && x.src <= b + 0.01) continue;
+        await openSource(f, Math.max(0, x.src - 0.5), x.src + 0.5);
+        const g = gray(await grab(x.src));
+        x.tpl = patch(g, Math.round(x.box[0] * g.w), Math.round(x.box[1] * g.h), Math.max(6, Math.round(x.box[2] * g.w)), Math.max(6, Math.round(x.box[3] * g.h)));
+      }
+      await openSource(f, a, b);
+      let first = true;
+      for (let t = a; t <= b + 0.001; t += step) {
+        if (stopFlag) throw new Error('Stopped');
+        const c = await grab(t);
+        const g = gray(c);
+        const dets = who.some(tr => !tr.manual) ? await detectFrame(c) : [];
+        for (const x of st) {
+          const bw = Math.max(6, Math.round(x.box[2] * g.w)), bh = Math.max(6, Math.round(x.box[3] * g.h));
+          let bx = Math.round(x.box[0] * g.w), by = Math.round(x.box[1] * g.h), ok = false;
+          // a face the finder sees where this person is
+          if (!x.tr.manual) {
+            let best = null, bs = 0;
+            for (const d of dets) {
+              const dist = Math.hypot((x.box[0] + x.box[2] / 2) - (d.box[0] + d.box[2] / 2), (x.box[1] + x.box[3] / 2) - (d.box[1] + d.box[3] / 2)) / Math.max(x.box[2], x.box[3]);
+              const sc = iou(x.box, d.box) > 0.1 ? 2 : dist < (first ? 2.5 : 1.2) ? 1 - dist / 3 : 0;
+              if (sc > bs) { bs = sc; best = d; }
+            }
+            if (best) { x.box = best.box.slice(); ok = true; }
+          }
+          if (!ok) {
+            if (!x.tpl) x.tpl = patch(g, bx, by, bw, bh);
+            const m = match(g, x.tpl, bx, by, Math.max(4, Math.round(Math.max(bw, bh) * (first ? 1.2 : 0.6))));
+            if (m.s > 0.35) { x.box = [m.x / g.w, m.y / g.h, bw / g.w, bh / g.h]; ok = true; }
+          }
+          if (ok) {
+            x.lost = 0;
+            const np = patch(g, Math.round(x.box[0] * g.w), Math.round(x.box[1] * g.h), bw, bh);
+            if (!x.tpl || x.tpl.p.length !== np.p.length) x.tpl = np;
+            else { for (let i = 0; i < x.tpl.p.length; i++) x.tpl.p[i] = x.tpl.p[i] * 0.85 + np.p[i] * 0.15; let q = 0; for (const v of x.tpl.p) q += v * v; x.tpl.n = Math.sqrt(q) || 1; }
+          } else x.lost += step;
+          if (ok || x.lost <= 3) x.pts.push([Math.round(t * 100) / 100, ...x.box.map(v => Math.round(v * 10000) / 10000)]);
+        }
+        first = false;
+        done += step;
+        status(`Blurring them in the other parts that use this file… ${Math.min(99, Math.round(done / total * 100))}%`);
+      }
+      for (const x of st) {
+        x.tr.pts = x.tr.pts.filter(p => p[0] < a - 0.01 || p[0] > b + 0.01).concat(x.pts).sort((p, q) => p[0] - q[0]);
+      }
+      await X.save();
+    }
+    status(`Done: ${people.length === 1 ? 'this person is' : 'these people are'} now blurred in every part of the video that uses this file (${todo.length} other stretch${todo.length === 1 ? '' : 'es'}). Check them in the Final video preview.`);
+  } catch (e) {
+    status(e.message === 'Stopped' ? 'Stopped. What was done so far is saved.' : 'Stopped: ' + e.message);
+  } finally {
+    await X.save();
+    try { await openSource(f, F.a, F.b); } catch (e) { /* the dialog may be closed */ }
+    busy(false);
+    renderList();
+    if (F) show(+$('fdTime').value);
+  }
+}
+
 // ---------- the dialog ----------
 const faces = f => { if (!f.faces) f.faces = { tracks: [], blur: {} }; f.faces.blur = f.faces.blur || {}; return f.faces; };
 function cleanBlur(data) { const ids = new Set(data.tracks.map(t => t.id)); for (const k of Object.keys(data.blur)) if (!ids.has(k)) delete data.blur[k]; }
 const status = t => { $('fdStatus').textContent = t; };
 function busy(on) {
   F.busy = on;
-  $('fdScan').disabled = on; $('fdStop').classList.toggle('hidden', !on); $('fdTime').disabled = on;
+  $('fdScan').disabled = on; $('fdAll').disabled = on; $('fdStop').classList.toggle('hidden', !on); $('fdTime').disabled = on;
+}
+
+// How many people are blurred somewhere in a..b of the file
+export function blurredIn(f, a, b) {
+  if (!f || !f.faces || !f.faces.tracks) return 0;
+  return f.faces.tracks.filter(t => f.faces.blur && f.faces.blur[t.id] && t.pts.some(p => p[0] >= a - 0.7 && p[0] <= b + 0.7)).length;
 }
 
 // Faces to blur for a file, in the shape the preview and export use
@@ -292,7 +400,7 @@ export function blurData(f) {
 export async function openFaces(f, a, b) {
   if (!f || f.type !== 'video') return;
   const pad = 0; a = Math.max(0, a - pad); b = Math.min(f.duration || b, b + pad);
-  F = { f, a, b, urls: [], offset: 0 };
+  F = { f, a, b, urls: [], offset: 0, src: null };
   $('fdTitle').textContent = `Blur faces · ${f.path || f.name}`;
   $('fdTime').min = a; $('fdTime').max = b; $('fdTime').step = 0.1; $('fdTime').value = a;
   $('fdList').innerHTML = '';
@@ -360,6 +468,7 @@ function wire() {
   $('fdClose').addEventListener('click', closeFaces);
   $('faceDialog').addEventListener('cancel', e => { e.preventDefault(); closeFaces(); });
   $('fdScan').addEventListener('click', scan);
+  $('fdAll').addEventListener('click', blurEverywhere);
   $('fdStop').addEventListener('click', () => { stopFlag = true; });
   let showing = null;
   $('fdTime').addEventListener('input', () => {

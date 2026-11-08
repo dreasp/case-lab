@@ -2,11 +2,11 @@
 // edited as a simple list (drag, trim, add, delete), previewed in order, script exported.
 
 import { addFiles, casePhotoItem, stripHtml, fillThumbs, migrate, openTrim } from './media.js';
-import { partLength } from './finish.js';
+import { partLength, footageRanges } from './finish.js';
 import { linesBetween, linesHtml, applyLineEdit } from './lines.js';
 import { getWords } from './words.js';
 import { evenVolume } from './even-volume.js';
-import { openFaces } from './faces.js';
+import { openFaces, blurredIn } from './faces.js';
 
 let X = null;               // helpers from footage.js
 const $ = id => document.getElementById(id);
@@ -177,6 +177,7 @@ function snap(f, seg) {
 export function renderStory() {
   const c = X.cur();
   if (!c) return;
+  rangesMemo = null;
   const st = story(c);
   $('storyTarget').value = st.targetMin || 30;
   $('storyStyle').value = st.style || '';
@@ -239,10 +240,24 @@ function infoCard(s) {
 }
 const openCards = new Set();
 
-function faceBtn(f) {
+// "Blur faces" for a clip, counting only people blurred in this clip
+function faceBtn(f, a, b) {
   if (!f || f.type !== 'video') return '';
-  const n = f.faces ? Object.keys(f.faces.blur || {}).length : 0;
+  const n = blurredIn(f, a, b);
   return `<button class="btn ghost small" data-act="faces" type="button" title="Find faces in this clip and choose which ones to blur">${n ? `Blurred faces (${n})` : 'Blur faces'}</button>`;
+}
+// The footage shown under a narration part (when it isn't your own photos or videos)
+let rangesMemo = null;
+function narrFootage(s) {
+  if (!rangesMemo) rangesMemo = footageRanges(X.cur());
+  for (const [fid, list] of Object.entries(rangesMemo)) for (const r of list) if (r.segId === s.id) return { f: X.fileById(fid), a: r.a, b: r.b };
+  return null;
+}
+function narrFaceBtn(s) {
+  const u = narrFootage(s);
+  if (!u || !u.f) return '';
+  const n = blurredIn(u.f, u.a, u.b);
+  return `<div class="seg-faces"><button class="btn ghost small" data-act="faces" type="button" title="Blur faces in the footage that plays while you narrate this part">${n ? `Blurred faces in the background footage (${n})` : 'Blur faces in the background footage'}</button></div>`;
 }
 
 function narrCard(s, i, n) {
@@ -253,6 +268,7 @@ function narrCard(s, i, n) {
       <div class="seg-num">Narration ${n} · <span class="mono" data-est>${X.fmtH(narrSecs(s.text))}</span></div>
       <textarea rows="${Math.min(8, Math.max(2, Math.ceil((s.text || '').length / 110)))}" data-field="text" placeholder="Write what you will say here">${X.esc(s.text || '')}</textarea>
       ${visuals(s, 'Shown one after another while you speak; photos slowly zoom. Without any, the footage leading up to the next clip is shown.')}
+      ${narrFaceBtn(s)}
       ${infoCard(s)}
     </div>
     <div class="seg-side">
@@ -302,7 +318,7 @@ function clipCard(s, i, k) {
         ${f && f.transcript ? '&nbsp; <button class="btn ghost" data-act="sentence" type="button" title="Moves the start and end so the clip begins and ends on whole sentences">Finish the sentence</button>' : ''}
       </div>
       ${editLines.has(s.id) ? `<div class="tl-edit">${lineEditor(f, s)}</div>` : `<div class="seg-lines">${clipLines(f, s)}</div>`}
-      ${f && f.transcript ? `<button class="btn ghost small tl-toggle" data-act="lines" type="button">${editLines.has(s.id) ? 'Done editing lines' : 'Edit lines (who said what)'}</button>` : ''} ${faceBtn(f)}
+      ${f && f.transcript ? `<button class="btn ghost small tl-toggle" data-act="lines" type="button">${editLines.has(s.id) ? 'Done editing lines' : 'Edit lines (who said what)'}</button>` : ''} ${faceBtn(f, s.start, s.end)}
       ${visuals(s, f && f.type === 'audio' ? 'Shown one after another while the recording plays; photos slowly zoom. Without any, a title card is shown.' : 'These replace the footage picture during this clip (its sound stays), one after another.')}
     </div>
     <div class="seg-side">
@@ -386,7 +402,12 @@ function wireList() {
     const s = segs[i];
     const act = b.dataset.act;
     if (act === 'play') return preview(i);
-    if (act === 'faces') { const f = X.fileById(s.file); if (f) openFaces(f, s.start, s.end); return; }
+    if (act === 'faces') {
+      if (s.type === 'clip') { const f = X.fileById(s.file); if (f) openFaces(f, s.start, s.end); return; }
+      const u = narrFootage(s);
+      if (u && u.f) openFaces(u.f, u.a, Math.max(u.a + 1, u.b));
+      return;
+    }
     if (act === 'lines') { if (editLines.has(s.id)) editLines.delete(s.id); else editLines.add(s.id); renderStory(); return; }
     if (act === 'view') { const f = X.fileById(s.file); if (f) X.openViewer(f, s.start); return; }
     if (act === 'up' && i > 0) [segs[i - 1], segs[i]] = [segs[i], segs[i - 1]];
