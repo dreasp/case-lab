@@ -9,6 +9,7 @@ import { caseChecks } from './checks.js';
 import { initStory, renderStory } from './story.js';
 import { initFinish, renderFinish } from './finish.js';
 import { initMedia } from './media.js';
+import { initFaces } from './faces.js';
 import { initWords } from './words.js';
 import { initLines } from './lines.js';
 
@@ -1080,6 +1081,7 @@ function wire() {
   initWords({ api, putFile: (k, b) => store.putFile(k, b), getFile: k => store.getFile(k) });
   initMedia({ esc, fileById, getLocalFile, signedUrls, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
   initFinish({ cur: () => cur, save, api, esc, fmtH, fileById, getLocalFile, linkOriginal, signedUrls, speakerMap, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
+  initFaces({ esc, fmtH, save, getLocalFile, signedUrls, onFacesChanged: () => renderStory() });
   initStory({ cur: () => cur, contextText, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, openViewer, speakerMap, refreshUsage, NATIVE_VIDEO });
   $('newCase').addEventListener('click', () => { if (running) return alert('Wait for the analysis to finish or press Stop first.'); showNew(); $('caseTitleInput').focus(); });
   const NEW_CTX = [['who', 'newWho'], ['files', 'newFiles'], ['dates', 'newDates'], ['outcome', 'newOutcome']];

@@ -6,6 +6,7 @@ import { partLength } from './finish.js';
 import { linesBetween, linesHtml, applyLineEdit } from './lines.js';
 import { getWords } from './words.js';
 import { evenVolume } from './even-volume.js';
+import { openFaces } from './faces.js';
 
 let X = null;               // helpers from footage.js
 const $ = id => document.getElementById(id);
@@ -96,6 +97,7 @@ export function initStory(helpers) {
   $('storyScript').addEventListener('click', downloadScript);
   $('storyCopy').addEventListener('click', copyNarration);
   $('storySentences').addEventListener('click', fixAllSentences);
+  $('storyTrans').addEventListener('change', async () => { const c = X.cur(); if (!c) return; story(c).trans = $('storyTrans').value; await X.save(); renderStory(); });
   $('storyTarget').addEventListener('change', async () => { const c = X.cur(); if (!c) return; story(c).targetMin = +$('storyTarget').value || 30; await X.save(); });
   $('storyStyle').addEventListener('change', async () => { const c = X.cur(); if (!c) return; story(c).style = $('storyStyle').value; await X.save(); });
   $('storyAddNarr').addEventListener('click', () => addSeg({ type: 'narration', text: '' }));
@@ -178,6 +180,7 @@ export function renderStory() {
   const st = story(c);
   $('storyTarget').value = st.targetMin || 30;
   $('storyStyle').value = st.style || '';
+  $('storyTrans').value = st.trans || 'none';
   $('storyBuild').textContent = st.segments.length ? 'Rebuild story' : 'Build story';
   ['storyPlay', 'storyScript', 'storyCopy'].forEach(id => { $(id).disabled = !st.segments.length; });
   $('storyAdd').classList.toggle('hidden', !st.segments.length);
@@ -206,13 +209,51 @@ function visuals(s, hint) {
   </details>`;
 }
 
+// The transition into a part (chosen per part, or the default for the whole video)
+const TRANS = { none: 'None (quick soft cut)', black: 'Fade through black', cross: 'Crossfade', slide: 'Slide', swirl: 'Swirl' };
+function transPick(s, i) {
+  if (!i) return '';
+  const def = story(X.cur()).trans || 'none';
+  const cur = s.trans || '';
+  return `<div class="seg-trans">Transition into this part: <select data-field="trans">
+      <option value="" ${!cur ? 'selected' : ''}>Default (${TRANS[def]})</option>
+      ${Object.entries(TRANS).map(([k, v]) => `<option value="${k}" ${cur === k ? 'selected' : ''}>${v}</option>`).join('')}
+    </select></div>`;
+}
+
+// Date and place card shown on screen while you narrate
+function infoCard(s) {
+  const k = s.card || {};
+  const on = !!(k.date || k.place);
+  return `<details class="seg-card" ${on || openCards.has(s.id) ? 'open' : ''} data-cardbox="${s.id}">
+    <summary>Date and place on screen${on ? ': ' + X.esc([k.date, k.place].filter(Boolean).join(' · ')) : ''}</summary>
+    <div class="card-fields">
+      <label class="small-text">Date<input data-card="date" value="${X.esc(k.date || '')}" placeholder="December 16, 2024"></label>
+      <label class="small-text">Place<input data-card="place" value="${X.esc(k.place || '')}" placeholder="Goshen Township, Ohio, USA"></label>
+      <label class="small-text">Animation<select data-card="anim"><option value="roll" ${k.anim !== 'type' ? 'selected' : ''}>Rolls up onto the screen</option><option value="type" ${k.anim === 'type' ? 'selected' : ''}>Typed out letter by letter</option></select></label>
+      <label class="small-text">Shown for<select data-card="dur">${[4, 6, 8, 10, 15].map(v => `<option value="${v}" ${(k.dur || 6) === v ? 'selected' : ''}>${v} seconds</option>`).join('')}</select></label>
+      <label class="small-text">Appears<select data-card="at">${[0, 1, 2, 3, 5].map(v => `<option value="${v}" ${(k.at || 0) === v ? 'selected' : ''}>${v ? v + ' s after the part starts' : 'when the part starts'}</option>`).join('')}</select></label>
+    </div>
+    <div class="muted small-text">Shown in the bottom left of the screen. Leave both empty to show nothing. You'll see it in the Final video preview.</div>
+  </details>`;
+}
+const openCards = new Set();
+
+function faceBtn(f) {
+  if (!f || f.type !== 'video') return '';
+  const n = f.faces ? Object.keys(f.faces.blur || {}).length : 0;
+  return `<button class="btn ghost small" data-act="faces" type="button" title="Find faces in this clip and choose which ones to blur">${n ? `Blurred faces (${n})` : 'Blur faces'}</button>`;
+}
+
 function narrCard(s, i, n) {
   return `<li class="seg narr" data-i="${i}">
     <div class="seg-handle" title="Drag to move">⠿</div>
     <div>
+      ${transPick(s, i)}
       <div class="seg-num">Narration ${n} · <span class="mono" data-est>${X.fmtH(narrSecs(s.text))}</span></div>
       <textarea rows="${Math.min(8, Math.max(2, Math.ceil((s.text || '').length / 110)))}" data-field="text" placeholder="Write what you will say here">${X.esc(s.text || '')}</textarea>
       ${visuals(s, 'Shown one after another while you speak; photos slowly zoom. Without any, the footage leading up to the next clip is shown.')}
+      ${infoCard(s)}
     </div>
     <div class="seg-side">
       <button class="btn ghost" data-act="play" type="button" title="Preview from here">▶</button>
@@ -249,6 +290,7 @@ function clipCard(s, i, k) {
   return `<li class="seg clip" data-i="${i}">
     <div class="seg-handle" title="Drag to move">⠿</div>
     <div>
+      ${transPick(s, i)}
       <div class="seg-num">Clip ${k} · <span class="mono">${X.fmtH(s.end - s.start)}</span></div>
       <div class="seg-head"><strong>${X.esc(s.label || 'Clip')}</strong><span class="seg-file">${X.esc(label(f))}</span></div>
       ${s.why ? `<div class="seg-why">${X.esc(s.why)}</div>` : ''}
@@ -260,7 +302,7 @@ function clipCard(s, i, k) {
         ${f && f.transcript ? '&nbsp; <button class="btn ghost" data-act="sentence" type="button" title="Moves the start and end so the clip begins and ends on whole sentences">Finish the sentence</button>' : ''}
       </div>
       ${editLines.has(s.id) ? `<div class="tl-edit">${lineEditor(f, s)}</div>` : `<div class="seg-lines">${clipLines(f, s)}</div>`}
-      ${f && f.transcript ? `<button class="btn ghost small tl-toggle" data-act="lines" type="button">${editLines.has(s.id) ? 'Done editing lines' : 'Edit lines (who said what)'}</button>` : ''}
+      ${f && f.transcript ? `<button class="btn ghost small tl-toggle" data-act="lines" type="button">${editLines.has(s.id) ? 'Done editing lines' : 'Edit lines (who said what)'}</button>` : ''} ${faceBtn(f)}
       ${visuals(s, f && f.type === 'audio' ? 'Shown one after another while the recording plays; photos slowly zoom. Without any, a title card is shown.' : 'These replace the footage picture during this clip (its sound stays), one after another.')}
     </div>
     <div class="seg-side">
@@ -311,6 +353,8 @@ function wireList() {
   list.addEventListener('toggle', e => {
     const d = e.target.closest && e.target.closest('[data-vis]');
     if (d) { if (d.open) openVis.add(d.dataset.vis); else openVis.delete(d.dataset.vis); }
+    const cb = e.target.closest && e.target.closest('[data-cardbox]');
+    if (cb) { if (cb.open) openCards.add(cb.dataset.cardbox); else openCards.delete(cb.dataset.cardbox); }
   }, true);
   list.addEventListener('click', async e => {
     if (e.target.closest('[data-tl="split"], [data-tl="del"]')) { await onLineEdit(e); return; }
@@ -342,6 +386,7 @@ function wireList() {
     const s = segs[i];
     const act = b.dataset.act;
     if (act === 'play') return preview(i);
+    if (act === 'faces') { const f = X.fileById(s.file); if (f) openFaces(f, s.start, s.end); return; }
     if (act === 'lines') { if (editLines.has(s.id)) editLines.delete(s.id); else editLines.add(s.id); renderStory(); return; }
     if (act === 'view') { const f = X.fileById(s.file); if (f) X.openViewer(f, s.start); return; }
     if (act === 'up' && i > 0) [segs[i - 1], segs[i]] = [segs[i], segs[i - 1]];
@@ -364,6 +409,14 @@ function wireList() {
     renderStory();
   });
   list.addEventListener('input', e => {
+    if (e.target.dataset.card) {
+      const s = story(X.cur()).segments[+e.target.closest('.seg').dataset.i];
+      const k = e.target.dataset.card;
+      s.card = { anim: 'roll', dur: 6, at: 0, ...(s.card || {}) };
+      s.card[k] = ['dur', 'at'].includes(k) ? +e.target.value : e.target.value;
+      saveSoon();
+      return;
+    }
     if (e.target.dataset.field !== 'text') return;
     const li = e.target.closest('.seg');
     story(X.cur()).segments[+li.dataset.i].text = e.target.value;
@@ -373,6 +426,13 @@ function wireList() {
   });
   list.addEventListener('change', async e => {
     if (e.target.closest('[data-tl]')) { await onLineEdit(e); return; }
+    if (e.target.dataset.field === 'trans') {
+      const s = story(X.cur()).segments[+e.target.closest('.seg').dataset.i];
+      if (e.target.value) s.trans = e.target.value; else delete s.trans;
+      await X.save();
+      return;
+    }
+    if (e.target.dataset.card) return; // saved while typing
     if (e.target.matches('[data-media-add], [data-case-photo], [data-media-replace]')) {
       const c = X.cur();
       const s = story(c).segments[+e.target.closest('.seg').dataset.i];

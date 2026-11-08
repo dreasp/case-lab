@@ -1,6 +1,7 @@
 // Final video (footage step 3): your recorded narration is matched to the narration parts,
 // then the whole story is built at full quality from your original footage.
 
+import { blurData } from './faces.js';
 import { evenVolume } from './even-volume.js';
 import { alignWords, buildCues, DEFAULT_STYLE } from './captions.js';
 import { mediaUrl, mediaBlob, migrate, slots } from './media.js';
@@ -222,6 +223,7 @@ function buildPlan(c, matched) {
   const out = [];
   const files = new Set(), convert = new Set();
   let t = 0, clips = 0;
+  const transOf = (s, k) => (k ? s.trans || (c.story && c.story.trans) || 'none' : 'none');
   const clipAt = (i, dir) => { for (let k = i + dir; k >= 0 && k < segs.length; k += dir) if (segs[k].type === 'clip' && X.fileById(segs[k].file)) return segs[k]; return null; };
   for (let i = 0; i < segs.length; i++) {
     const s = segs[i];
@@ -231,7 +233,7 @@ function buildPlan(c, matched) {
       const dur = Math.max(0.5, s.end - s.start);
       files.add(f.id); if (!direct(f) || f.type === 'audio') convert.add(f.id);
       const pic = (s.media || []).length ? { own: s.media } : f.type === 'video' ? { file: f, from: s.start } : { card: f.analysis && f.analysis.camera ? cap(f.analysis.camera) : 'Audio recording', sub: label(f) };
-      out.push({ kind: 'clip', t0: t, dur, file: f, from: s.start, pic, sound: [{ file: f, from: s.start, gain: 1 }], seg: s });
+      out.push({ kind: 'clip', t0: t, dur, file: f, from: s.start, pic, sound: [{ file: f, from: s.start, gain: 1 }], seg: s, trans: transOf(s, out.length) });
       clips++;
       t += dur;
       continue;
@@ -278,7 +280,8 @@ function buildPlan(c, matched) {
     else if (mode === 'next' || mode === 'own') { if (!tryNext() && !tryPrev()) still(); }
     else if (mode === 'prev') { if (!tryPrev() && !tryNext()) still(); }
     else if (mode === 'still') still();
-    out.push({ kind: 'narr', t0: t, dur, pic, sound, narr: { a0: m.a0, len, lead: LEAD }, match: m, seg: s });
+    const card = s.card && (s.card.date || s.card.place) ? s.card : null;
+    out.push({ kind: 'narr', t0: t, dur, pic, sound, narr: { a0: m.a0, len, lead: LEAD }, match: m, seg: s, trans: transOf(s, out.length), card });
     t += dur;
   }
   return { segs: out, total: t, clips, files, convert };
@@ -590,7 +593,7 @@ async function exportVideo() {
         return { t0: sg.t0, dur: sg.dur, pic: null, pics, sound, narr: sg.narr || null };
       }
       let pic = null;
-      if (sg.pic && sg.pic.file) { const w = where(sg.pic.file, sg.pic.from); pic = { sid: w.sid, from: w.from, freeze: !!sg.pic.freeze }; }
+      if (sg.pic && sg.pic.file) { const w = where(sg.pic.file, sg.pic.from); pic = { sid: w.sid, from: w.from, freeze: !!sg.pic.freeze, faces: blurData(sg.pic.file), fofs: sg.pic.from - w.from }; }
       else if (sg.pic && sg.pic.card) pic = { card: sg.pic.card, sub: sg.pic.sub };
       const sound = withMute(si, sg.sound.map(s => { const w = where(s.file, s.from); return { sid: w.sid, from: w.from, gain: s.gain }; }));
       return { t0: sg.t0, dur: sg.dur, pic, sound, narr: sg.narr || null };
@@ -601,6 +604,8 @@ async function exportVideo() {
       captions: await captionCues(plan, opts.caps || 'footage', aspect, opts.mute !== false ? muteMatcher(muteList()) : null),
       watermark: await watermarkJob(opts),
       muteHow: opts.muteHow || 'silence',
+      cuts: plan.segs.map(sg => ({ T: sg.t0, kind: sg.trans || 'none' })),
+      cards: plan.segs.filter(sg => sg.card).map(sg => ({ t0: sg.t0 + (sg.card.at || 0), card: sg.card })),
     };
     progress(0.3, 'Building the video…');
     const res = await new Promise((ok, bad) => {
@@ -663,7 +668,7 @@ async function previewFinal() {
   const logo = opts.wm !== false ? await getLogo() : null;
   $('fpWm').classList.toggle('hidden', !logo);
   if (logo) $('fpWm').src = logoUrl;
-  PV = { wm: logo ? wmSettings() : null, plan, capMode: opts.caps || 'footage', isSwear, cues: caps ? caps.cues : [], mutes, i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
+  PV = { wm: logo ? wmSettings() : null, plan, capMode: opts.caps || 'footage', isSwear, cues: caps ? caps.cues : [], mutes, i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), faces: new Map(plan.segs.filter(sg => sg.pic && sg.pic.file && blurData(sg.pic.file)).map(sg => [sg.pic.file.id, blurData(sg.pic.file)])), cut: null, urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
   $('fpNarr').src = nurl;
   $('fpTotal').textContent = X.fmtH(plan.total);
   $('fpBar').innerHTML = '<div id="fpFill"></div>' + plan.segs.slice(1).map(sg => `<i style="left:${sg.t0 / plan.total * 100}%"></i>`).join('');
@@ -673,6 +678,55 @@ async function previewFinal() {
   requestAnimationFrame(tick);
 }
 
+// ---------- effects in the preview: blurred faces, transitions, date and place card ----------
+// Drawn on a layer over the video with the same drawing code as the export.
+const snapCanvas = document.createElement('canvas');
+function fxSize() {
+  const c = $('fpFx'), r = $('fpStage').getBoundingClientRect(), d = Math.min(2, window.devicePixelRatio || 1);
+  const W = Math.max(2, Math.round(r.width * d)), H = Math.max(2, Math.round(r.height * d));
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  return [W, H];
+}
+const modeFor = (w, h, W, H) => { const r = (w / h) / (W / H); return { mode: r < 0.9 || r > 1.11 ? 'fit' : 'fill' }; };
+// Draws the picture that is showing now (with faces blurred), for blurring and transitions
+function drawPicture(x, W, H, withBlur) {
+  const V = $('fpVideo'), IMG = $('fpImg');
+  x.fillStyle = '#000'; x.fillRect(0, 0, W, H);
+  if (!V.classList.contains('hidden') && V.videoWidth) {
+    const fr = modeFor(V.videoWidth, V.videoHeight, W, H);
+    CaseDraw.drawMedia(x, V, W, H, fr, 1, true);
+    const sg = PV.plan.segs[PV.i];
+    const faces = withBlur && sg && sg.pic && sg.pic.file ? PV.faces.get(sg.pic.file.id) : null;
+    if (faces) CaseDraw.blurBoxes(x, CaseDraw.mediaRect(V, W, H, fr, 1, true), CaseDraw.faceBoxesAt(faces, V.currentTime));
+    return true;
+  }
+  if (!IMG.classList.contains('hidden') && IMG.naturalWidth) { CaseDraw.drawMedia(x, IMG, W, H, { mode: 'auto' }, 1, false); return true; }
+  return false;
+}
+function snapshotNow() {
+  const [W, H] = fxSize();
+  snapCanvas.width = W; snapCanvas.height = H;
+  if (!drawPicture(snapCanvas.getContext('2d'), W, H, true)) return null;
+  return snapCanvas;
+}
+function drawFx(T) {
+  const [W, H] = fxSize();
+  const x = $('fpFx').getContext('2d');
+  x.clearRect(0, 0, W, H);
+  const segs = PV.plan.segs, sg = segs[PV.i];
+  if (!sg) return;
+  const into = T - sg.t0;
+  if (sg.pic && sg.pic.file && PV.faces.get(sg.pic.file.id)) drawPicture(x, W, H, true);
+  if (PV.cut) {
+    const dt = T - PV.cut.T;
+    if (dt > (CaseDraw.TRANSITIONS[PV.cut.kind] || {}).d || dt < -0.2) PV.cut = null;
+    else CaseDraw.drawTransition(x, W, H, PV.cut.kind, Math.max(0, dt), PV.cut.snap);
+  }
+  const next = segs[PV.i + 1];
+  if (next && next.trans === 'black' && next.t0 - T <= CaseDraw.TRANSITIONS.black.d / 2 && next.t0 > T) CaseDraw.drawTransition(x, W, H, 'black', T - next.t0, null);
+  if (sg.card) { const a = sg.card.at || 0; if (into >= a && into < a + (sg.card.dur || 6)) CaseDraw.drawInfoCard(x, W, H, sg.card, into - a); }
+}
+
 const nowT = () => PV.playing ? PV.base + (performance.now() - PV.wall) / 1000 : PV.base;
 const segAt = T => { const s = PV.plan.segs; let i = s.findIndex(x => T < x.t0 + x.dur); return i < 0 ? s.length - 1 : i; };
 
@@ -680,6 +734,7 @@ async function seekTo(T) {
   if (!PV) return;
   T = Math.max(0, Math.min(PV.plan.total - 0.05, T));
   PV.base = T; PV.wall = performance.now();
+  PV.cut = null;
   const i = segAt(T);
   await loadSeg(i, T - PV.plan.segs[i].t0);
 }
@@ -785,7 +840,11 @@ function tick() {
   if (sg && PV.playing) {
     const into = T - sg.t0;
     if (T >= PV.plan.total) { togglePlay(false); PV.base = PV.plan.total; }
-    else if (into >= sg.dur && PV.i < segs.length - 1) { loadSeg(PV.i + 1, T - segs[PV.i + 1].t0); }
+    else if (into >= sg.dur && PV.i < segs.length - 1) {
+      const nx = segs[PV.i + 1];
+      PV.cut = nx.trans && nx.trans !== 'none' ? { kind: nx.trans, T: nx.t0, snap: nx.trans === 'black' ? null : snapshotNow() } : null;
+      loadSeg(PV.i + 1, T - nx.t0);
+    }
     else if (sg.pic && sg.pic.own && PV.ownSl && (into >= PV.ownT + PV.ownD || into < PV.ownT) && PV.ownK < PV.ownSl.length - 1) { loadSeg(PV.i, into); }
     else {
       if (sg.narr && !PV.narrStarted && into >= sg.narr.lead) { $('fpNarr').play().catch(() => {}); PV.narrStarted = true; }
@@ -812,6 +871,7 @@ function tick() {
   }
   const fill = $('fpFill'); if (fill) fill.style.width = `${Math.min(100, T / PV.plan.total * 100)}%`;
   $('fpTime').textContent = X.fmtH(T);
+  drawFx(T);
   const cue = PV.cues.find(q => T >= q.s && T < q.e);
   PV.cue = cue || null;
   if (PV.wm) {

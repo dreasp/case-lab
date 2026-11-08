@@ -316,7 +316,8 @@ async function run(job) {
   const canvas = new OffscreenCanvas(W, H);
   const ctx = canvas.getContext('2d', { alpha: false });
   // captions and the logo go on a separate layer, so they don't end up in the crossfade picture
-  const layered = !!(job.captions || job.watermark);
+  const cards = job.cards || [];
+  const layered = !!(job.captions || job.watermark || cards.length);
   const out = layered ? new OffscreenCanvas(W, H) : canvas;
   const octx = layered ? out.getContext('2d', { alpha: false }) : ctx;
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
@@ -333,10 +334,15 @@ async function run(job) {
 
   // A narration part can show several of your photos/videos in a row: one picture slot each
   const vsegs = [];
-  for (const x of segs) {
-    if (x.pics && x.pics.length) x.pics.forEach(p => vsegs.push({ t0: x.t0 + p.t, dur: p.dur, pic: p.pic }));
-    else vsegs.push({ t0: x.t0, dur: x.dur, pic: x.pic });
-  }
+  // the transition into each part (the first picture slot of a part)
+  const cuts = job.cuts || [];
+  segs.forEach((x, pi) => {
+    const kind = pi > 0 && cuts[pi] ? cuts[pi].kind : 'none';
+    if (x.pics && x.pics.length) x.pics.forEach((p, k) => vsegs.push({ t0: x.t0 + p.t, dur: p.dur, pic: p.pic, cut: k === 0 ? kind : 'none' }));
+    else vsegs.push({ t0: x.t0, dur: x.dur, pic: x.pic, cut: kind });
+  });
+  // the next "fade through black" cut, to start fading out before it
+  const blackCuts = cuts.filter((c, i) => i > 0 && c.kind === 'black').map(c => c.T);
   const images = new Map(); // source id -> decoded photo
   const imageOf = async sid => {
     if (!images.has(sid)) images.set(sid, await createImageBitmap(srcs[sid].blob).catch(e => { problems.push(`Photo "${srcs[sid].name}" could not be read.`); return null; }));
@@ -367,7 +373,8 @@ async function run(job) {
     const into = t - sg.t0;
     ctx.globalAlpha = 1;
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-    const fading = si > 0 && snapshot && into < FADE;
+    const cut = sg.cut || 'none';
+    const fading = si > 0 && snapshot && into < FADE && cut === 'none';
     if (fading) ctx.drawImage(snapshot, 0, 0, W, H);
     ctx.globalAlpha = fading ? Math.max(0.05, into / FADE) : 1;
     if (sg.pic && sg.pic.img) {
@@ -382,7 +389,16 @@ async function run(job) {
           pic = held;
         } else pic = await rd.frameAt(sg.pic.until != null ? Math.min(sg.pic.from + into, sg.pic.until) : sg.pic.from + into);
       } catch (e) { problems.push(`Picture at ${fmtTime(t)}: ${e.message}`); rd = null; }
-      if (pic) CaseDraw.drawMedia(ctx, pic, W, H, frameMode(rd.src), 1, true);
+      if (pic) {
+        CaseDraw.drawMedia(ctx, pic, W, H, frameMode(rd.src), 1, true);
+        if (sg.pic.faces) {
+          // blur the faces you picked (their times are in seconds of the original file)
+          const ft = (sg.pic.freeze ? sg.pic.from : sg.pic.until != null ? Math.min(sg.pic.from + into, sg.pic.until) : sg.pic.from + into) + (sg.pic.fofs || 0);
+          ctx.globalAlpha = 1;
+          CaseDraw.blurBoxes(ctx, CaseDraw.mediaRect(pic, W, H, frameMode(rd.src), 1, true), CaseDraw.faceBoxesAt(sg.pic.faces, ft));
+          ctx.globalAlpha = fading ? Math.max(0.05, into / FADE) : 1;
+        }
+      }
     } else if (sg.pic && sg.pic.card) {
       ctx.fillStyle = '#0c0d10'; ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = '#e8e6e1';
@@ -392,7 +408,12 @@ async function run(job) {
       if (sg.pic.sub) { ctx.fillStyle = '#9a9890'; ctx.font = `400 ${Math.round(Math.min(W, H) * 0.028)}px Arial, Helvetica, sans-serif`; ctx.fillText(sg.pic.sub, W / 2, H / 2 + Math.min(W, H) * 0.04); }
     }
     ctx.globalAlpha = 1;
+    // transitions between parts
+    if (si > 0 && cut !== 'none') CaseDraw.drawTransition(ctx, W, H, cut, into, snapshot);
+    const nb = blackCuts.find(T => T > t && T - t <= CaseDraw.TRANSITIONS.black.d / 2);
+    if (nb != null) CaseDraw.drawTransition(ctx, W, H, 'black', t - nb, null);
     if (layered) octx.drawImage(canvas, 0, 0);
+    for (const cd of cards) if (t >= cd.t0 && t < cd.t0 + (cd.card.dur || 6)) CaseDraw.drawInfoCard(octx, W, H, cd.card, t - cd.t0);
     if (job.captions) CaseDraw.drawCaptions(octx, W, H, job.captions.cues, t, job.captions.style);
     if (job.watermark) CaseDraw.drawWatermark(octx, job.watermark.img, W, H, t, job.watermark);
     const frame = new VideoFrame(out, { timestamp: Math.round(k * 1e6 / FPS), duration: Math.round(1e6 / FPS) });

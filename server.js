@@ -39,6 +39,7 @@ app.get('/vendor/mp4-muxer.js', (req, res) =>
 // In-browser converter for formats Chrome can't play (WMV, AVI, MPG...); cached by the browser
 app.use('/vendor/ffmpeg', express.static(path.join(__dirname, 'node_modules/@ffmpeg/ffmpeg/dist/esm'), { maxAge: '30d' }));
 app.use('/vendor/ffmpeg-core', express.static(path.join(__dirname, 'node_modules/@ffmpeg/core/dist/esm'), { maxAge: '30d' }));
+app.use('/vendor/ort', express.static(path.join(__dirname, 'node_modules/onnxruntime-web/dist'), { maxAge: '30d' }));
 
 app.use('/api', auth.router);
 app.use('/api', auth.requireLogin, broll.router);

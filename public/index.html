@@ -300,6 +300,9 @@
               <button id="storyPlay" class="btn ghost" type="button">Preview from start</button>
               <button id="storyScript" class="btn ghost" type="button">Download script</button>
               <button id="storyCopy" class="btn ghost" type="button">Copy narration</button>
+              <label class="small-text muted story-trans-def" title="The transition between parts. You can change it for any single part in the list below">Transitions <select id="storyTrans">
+                <option value="none">None (quick soft cut)</option><option value="black">Fade through black</option><option value="cross">Crossfade</option><option value="slide">Slide</option><option value="swirl">Swirl</option>
+              </select></label>
               <button id="storySentences" class="btn ghost" type="button" title="Free: uses the transcript timing. Moves clip starts and ends so nobody is cut off mid-sentence">Fix cut-off sentences</button>
               <div class="grow"></div>
               <span id="storyTotals" class="mono muted small-text"></span>
@@ -498,6 +501,28 @@
   </dialog>
 
   <!-- Final video preview -->
+  <dialog id="faceDialog" class="swap face-dialog">
+    <div class="swap-head">
+      <div><div class="mono muted">Faces</div><h3 id="fdTitle">Blur faces</h3></div>
+      <div class="row-btns">
+        <button id="fdScan" class="btn small" type="button" title="Looks for faces in this clip (free, runs on your computer)">Find faces</button>
+        <button id="fdStop" class="btn ghost small hidden" type="button">Stop</button>
+        <button id="fdClose" class="btn ghost small" type="button">Done</button>
+      </div>
+    </div>
+    <div class="fd-body">
+      <div class="fd-left">
+        <canvas id="fdCanvas" class="fd-canvas" title="Drag a box around a face to blur it"></canvas>
+        <div class="fd-time"><input id="fdTime" type="range" min="0" max="1" step="0.1" value="0"><span id="fdClock" class="mono small-text">0:00</span></div>
+        <p id="fdStatus" class="small-text"></p>
+        <p id="fdNote" class="muted small-text"></p>
+        <p class="muted small-text">Drag a box around a face on the picture to add someone the app missed; it then follows that face through the clip. Blurring applies everywhere this file is shown, in the preview and the exported video.</p>
+      </div>
+      <ul id="fdList" class="fd-list"></ul>
+    </div>
+    <video id="fdVideo" class="hidden" muted playsinline preload="auto"></video>
+  </dialog>
+
   <dialog id="finDialog" class="swap story-preview">
     <div class="swap-head">
       <div><div id="fpMeta" class="mono muted"></div><h3 id="fpTitle">Preview</h3></div>
@@ -515,6 +540,7 @@
       <video id="fpVideo" playsinline></video>
       <img id="fpImg" class="fp-img hidden" alt="">
       <div id="fpCard" class="sp-narr hidden"></div>
+      <canvas id="fpFx" class="fp-fx"></canvas>
       <div id="fpCap" class="fp-cap hidden"></div>
       <img id="fpWm" class="fp-wm hidden" alt="">
     </div>
