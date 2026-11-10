@@ -31,6 +31,10 @@ class GeminiError extends Error {
 }
 
 // search: true lets the AI look things up on Google; the sources come back in result._sources
+// Long videos can take Gemini several minutes to answer: wait up to 15 minutes instead of 5
+const { Agent, fetch: slowFetch } = require('undici');
+const slowAgent = new Agent({ headersTimeout: 15 * 60 * 1000, bodyTimeout: 15 * 60 * 1000, connectTimeout: 60 * 1000 });
+
 async function generateJSON(parts, { temperature = 0.3, images = false, search = false } = {}) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new GeminiError('GEMINI_API_KEY is not set on the server.', 'SETUP');
@@ -50,11 +54,21 @@ async function generateJSON(parts, { temperature = 0.3, images = false, search =
     const waits = [15000, 30000, 60000];
     let parseRetried = false;
     for (let attempt = 0; ; attempt++) {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-        body: JSON.stringify(body),
-      });
+      let r;
+      try {
+        r = await slowFetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify(body),
+          dispatcher: slowAgent,
+        });
+      } catch (e) {
+        // the connection to Google dropped or timed out ("fetch failed"): wait and try again
+        const why = (e.cause && (e.cause.code || e.cause.message)) || e.message;
+        console.warn('Gemini request failed:', why);
+        if (attempt < waits.length) { await sleep(waits[attempt]); continue; }
+        throw new GeminiError(`Could not reach Gemini after several tries (${why}). Your progress is saved: press the button again in a few minutes.`, 'NETWORK');
+      }
       if (r.ok) {
         const data = await r.json();
         const cand = data.candidates?.[0];

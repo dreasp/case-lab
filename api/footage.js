@@ -84,10 +84,26 @@ router.get('/case/words/:id', async (req, res) => {
 const G_BASE = () => (process.env.GEMINI_BASE || 'https://generativelanguage.googleapis.com').replace(/\/$/, '');
 const G_KEY = () => String(process.env.GEMINI_API_KEY || '').trim();
 
+// Copies the analysis copy from cloud storage to Gemini. A dropped connection ("fetch failed") is
+// tried again twice, since big videos take a while to send.
 router.post('/case/gemini-upload', async (req, res) => {
-  try {
-    const { key, name, mime } = req.body || {};
-    if (!cloud.KEY_RE.test(String(key || ''))) return res.status(400).json({ error: 'Bad key' });
+  const { key } = req.body || {};
+  if (!cloud.KEY_RE.test(String(key || ''))) return res.status(400).json({ error: 'Bad key' });
+  let last = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { return res.json(await sendToGemini(req.body)); } catch (e) {
+      last = e;
+      if (!/fetch failed|socket|ECONNRESET|terminated/i.test(e.message + ' ' + ((e.cause && e.cause.code) || ''))) break;
+      console.warn('Gemini upload dropped, trying again:', e.cause ? e.cause.code || e.cause.message : e.message);
+      await new Promise(r => setTimeout(r, 10000 * (attempt + 1)));
+    }
+  }
+  const why = last.cause ? ` (${last.cause.code || last.cause.message})` : '';
+  res.status(500).json({ error: /fetch failed/.test(last.message) ? `Sending the video to Gemini kept failing${why}. Your progress is saved: press "Analyze all" again in a few minutes.` : last.message });
+});
+
+async function sendToGemini({ key, name, mime }) {
+  {
     const src = await fetch(await cloud.signedUrl(key, 'GET'));
     if (!src.ok) throw new Error('Could not read the analysis copy from storage (' + src.status + ')');
     const size = Number(src.headers.get('content-length'));
@@ -114,9 +130,9 @@ router.post('/case/gemini-upload', async (req, res) => {
     });
     const data = await up.json().catch(() => ({}));
     if (!up.ok || !data.file) throw new Error('Upload to Gemini failed: ' + JSON.stringify(data).slice(0, 200));
-    res.json({ name: data.file.name, uri: data.file.uri, state: data.file.state, mime: data.file.mimeType || type });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+    return { name: data.file.name, uri: data.file.uri, state: data.file.state, mime: data.file.mimeType || type };
+  }
+}
 
 router.get('/case/gemini-file/:id', async (req, res) => {
   try {
