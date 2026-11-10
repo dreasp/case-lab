@@ -700,19 +700,28 @@ async function ensureTranscript(f) {
 async function ensureGeminiFile(f) {
   const fresh = f.gfile && Date.now() - f.gfile.at < 40 * 3600 * 1000;
   if (fresh) {
-    const st = await api('case/gemini-file/' + f.gfile.name.split('/').pop());
+    const st = await api('case/gemini-file/' + f.gfile.name.split('/').pop()).catch(() => ({}));
     if (st.state === 'ACTIVE') return f.gfile;
   }
-  setStatus(f, 'sending');
-  const up = await api('case/gemini-upload', { key: f.type === 'document' ? f.docKey : f.proxyKey, name: f.name, mime: f.type === 'document' ? 'application/pdf' : 'video/mp4' });
-  f.gfile = { name: up.name, uri: up.uri, mime: up.mime, at: Date.now() };
-  for (let i = 0; i < 120; i++) {
-    const st = await api('case/gemini-file/' + up.name.split('/').pop());
-    if (st.state === 'ACTIVE') { await save(); return f.gfile; }
-    if (st.state === 'FAILED' || st.state === 'GONE') throw new Error('Gemini could not process this file' + (st.error ? ': ' + st.error : ''));
-    await sleep(3000);
+  // Sends the analysis copy to Gemini and waits until it's ready. If Google keeps failing to
+  // describe the file it received (a 500 error each time), the copy is sent once more.
+  let lastErr = '';
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    setStatus(f, 'sending');
+    const up = await api('case/gemini-upload', { key: f.type === 'document' ? f.docKey : f.proxyKey, name: f.name, mime: f.type === 'document' ? 'application/pdf' : 'video/mp4' });
+    f.gfile = { name: up.name, uri: up.uri, mime: up.mime, at: Date.now() };
+    let broken = 0;
+    for (let i = 0; i < 160; i++) {
+      const st = await api('case/gemini-file/' + up.name.split('/').pop()).catch(e => ({ state: 'BROKEN', error: e.message }));
+      if (st.state === 'ACTIVE') { await save(); return f.gfile; }
+      if (st.state === 'FAILED' || st.state === 'GONE') throw new Error('Gemini could not process this file' + (st.error ? ': ' + st.error : ''));
+      if (st.state === 'BROKEN') { lastErr = st.error || ''; if (++broken >= 6) break; } else broken = 0;
+      await sleep(broken ? 5000 : 3000);
+    }
+    if (broken < 6) throw new Error('Gemini took too long to prepare the video.');
   }
-  throw new Error('Gemini took too long to prepare the video.');
+  f.gfile = null;
+  throw new Error('Google could not prepare this video, even after sending it twice. ' + (f.duration > 3 * 3600 ? 'It may be too long for Gemini in one piece. ' : '') + '(' + lastErr.slice(0, 160) + ')');
 }
 
 function mergeParts(parts) {

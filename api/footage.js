@@ -124,6 +124,9 @@ router.get('/case/gemini-file/:id', async (req, res) => {
     const r = await fetch(`${G_BASE()}/v1beta/files/${id}`, { headers: { 'x-goog-api-key': G_KEY() } });
     const data = await r.json().catch(() => ({}));
     if (r.status === 404 || r.status === 403) return res.json({ state: 'GONE' });
+    // Google sometimes can't describe a file it received (a 500 error every time for that file).
+    // The app then sends the video again instead of stopping.
+    if (r.status >= 500) return res.json({ state: 'BROKEN', error: 'Gemini file check failed: ' + JSON.stringify(data).slice(0, 200) });
     if (!r.ok) throw new Error('Gemini file check failed: ' + JSON.stringify(data).slice(0, 200));
     res.json({ state: data.state, uri: data.uri, error: data.error && data.error.message });
   } catch (e) { res.status(500).json({ error: e.message }); }
