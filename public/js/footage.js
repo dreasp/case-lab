@@ -236,6 +236,28 @@ async function requestAccess() {
   return st === 'granted';
 }
 
+// Asks Chrome for permission to read the originals of these files, right after a click (Chrome
+// only shows its "Allow" question then). The case folder needs one OK; files added one by one
+// each need their own. Returns false if something was refused.
+async function ensureRead(files) {
+  let ok = true;
+  const dir = await folderHandle();
+  if (dir && files.some(f => !f.handleKey && f.path)) {
+    let st = await dir.queryPermission({ mode: 'read' }).catch(() => 'denied');
+    if (st !== 'granted') st = await dir.requestPermission({ mode: 'read' }).catch(() => 'denied');
+    ok = ok && st === 'granted';
+  }
+  for (const f of files) {
+    if (!f.handleKey || sessionFiles.has(f.id)) continue;
+    const h = await getHandle(f.handleKey);
+    if (!h) continue;
+    let st = await h.queryPermission({ mode: 'read' }).catch(() => 'denied');
+    if (st !== 'granted') st = await h.requestPermission({ mode: 'read' }).catch(() => 'denied');
+    ok = ok && st === 'granted';
+  }
+  return ok;
+}
+
 // Link an original that the app can't find (added with "Add files" in an earlier session, moved,
 // or on a drive that was unplugged): you pick it once, and it's remembered from then on.
 async function linkOriginal(f) {
@@ -1136,7 +1158,7 @@ function wire() {
   initWords({ api, putFile: (k, b) => store.putFile(k, b), getFile: k => store.getFile(k) });
   initMedia({ esc, fileById, getLocalFile, signedUrls, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
   initShorts({ cur: () => cur, save, esc, fmtH, fileById, blurredIn, openFaces, openShort });
-  initFinish({ cur: finishCur, leaveShort, save, api, esc, fmtH, fileById, getLocalFile, linkOriginal, signedUrls, speakerMap, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
+  initFinish({ cur: finishCur, leaveShort, ensureRead, save, api, esc, fmtH, fileById, getLocalFile, linkOriginal, signedUrls, speakerMap, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
   initFaces({ esc, fmtH, save, getLocalFile, signedUrls, footageRanges: f => (footageRanges(cur)[f.id] || []), onFacesChanged: () => { renderStory(); renderShorts(); } });
   initStory({ cur: () => cur, contextText, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, openViewer, speakerMap, refreshUsage, NATIVE_VIDEO });
   $('newCase').addEventListener('click', () => { if (running) return alert('Wait for the analysis to finish or press Stop first.'); showNew(); $('caseTitleInput').focus(); });

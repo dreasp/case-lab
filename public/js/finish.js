@@ -682,7 +682,8 @@ async function previewMedia(f, a = null, b = null) {
   }
   if (!m && a != null) {
     // no copies in the cloud: convert just this part of the original, if it's linked here
-    const file = await X.getLocalFile(f).catch(() => null);
+    let why = '';
+    const file = await X.getLocalFile(f).catch(e => { why = e.message || ''; return null; });
     if (file) {
       const start = Math.max(0, a - 1), len = Math.min(240, (b || a + 30) - start + 1);
       $('fpNote').textContent = `Preparing this part of "${label(f)}" for the preview… (its analysis copy was removed from the cloud)`;
@@ -697,7 +698,7 @@ async function previewMedia(f, a = null, b = null) {
       } catch (e) { m = { video: null, audio: null, note: `This part could not be prepared: ${e.message}` }; PV.media.set(rk, m); return m; }
       finally { if (PV) PV.preparing = false; }
     }
-    m = { video: null, audio: null, missing: true, note: `"${label(f)}" can't be shown: its analysis copy was removed from the cloud ("Free cloud space") and the original isn't linked on this computer. Link it on the Files tab (Choose case folder, or Find it), then open the preview again.` };
+    m = { video: null, audio: null, missing: true, note: `"${label(f)}" can't be shown: its analysis copy was removed from the cloud ("Free cloud space") and the original couldn't be opened${why ? ` (${why})` : ''}. If Chrome asked to allow access to your files, click Allow and open the preview again; otherwise link it on the Files tab (Choose case folder, or Find it).` };
     PV.media.set(rk, m);
     return m;
   }
@@ -712,6 +713,8 @@ async function previewFinal() {
   if (!m) return alert('Upload your narration first.');
   const opts = (c.narr && c.narr.opts) || {};
   const plan = buildPlan(c, m);
+  // Chrome's OK to read your original files has to be asked right after the click
+  if (X.ensureRead) await X.ensureRead([...plan.files].map(id => X.fileById(id)).filter(Boolean));
   const isSwear = opts.mute !== false ? muteMatcher(muteList()) : null;
   const tall = !!c.isShort;
   const caps = await captionCues(plan, opts.caps || 'footage', '16:9', isSwear);
