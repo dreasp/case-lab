@@ -7,6 +7,8 @@
 // the Final video tab like the long video (see shortView in footage.js).
 
 import { wholeSentences } from './story.js';
+import { addFiles, casePhotoItem, stripHtml, fillThumbs, openTrim } from './media.js';
+import { linesBetween, linesHtml, applyLineEdit } from './lines.js';
 
 const $ = id => document.getElementById(id);
 let X = null;
@@ -16,7 +18,10 @@ const MIN = 30, MAX = 60;
 const KIND = { reveal: 3, emotional: 2.5, action: 2, dialogue: 1.5, context: 0 };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const shorts = c => (c.shorts = c.shorts || []);
-const lengthOf = sh => sh.clips.reduce((n, k) => n + Math.max(0, k.end - k.start), 0) + ((sh.intro || '').trim() ? (sh.intro.trim().split(/\s+/).length / 2.6 + 0.8) : 0);
+const mediaLen = list => (list || []).reduce((d, it) => d + (it.kind === 'video' ? (it.len || 5) : 3.5), 0);
+const lengthOf = sh => sh.clips.reduce((n, k) => n + Math.max(0, k.end - k.start), 0) + ((sh.intro || '').trim() ? (sh.intro.trim().split(/\s+/).length / 2.6 + 0.8) : 0)
+  + mediaLen(sh.startMedia) + mediaLen(sh.endMedia);
+const editLines = new Set();
 
 // How much is said in a stretch of a file (words a second), from the transcript
 function talk(f, a, b) {
@@ -83,6 +88,7 @@ export function renderShorts() {
   const c = X.cur();
   if (!c) return;
   const list = shorts(c);
+  const casePhotos = c.files.filter(f => f.type === 'photo');
   $('shortsList').innerHTML = list.map((sh, i) => {
     const len = lengthOf(sh);
     const ok = len >= MIN && len <= MAX;
@@ -95,8 +101,12 @@ export function renderShorts() {
       ${sh.why ? `<div class="short-why muted small-text">${X.esc(sh.why)}</div>` : ''}
       <div class="short-fields">
         <label class="small-text">On-screen hook (first 4 seconds, top of the screen)<input data-sf="hook" value="${X.esc(sh.hook || '')}" placeholder="A short line that makes people stay"></label>
-        <label class="small-text">Your intro to record (optional)<textarea data-sf="intro" rows="2" placeholder="${X.esc(sh.introDraft ? 'Idea: ' + sh.introDraft : 'Leave empty for footage only')}">${X.esc(sh.intro || '')}</textarea></label>
+        <label class="small-text">Your intro to record (plays first, over the footage with its sound off)<textarea data-sf="intro" rows="3" placeholder="${X.esc(sh.introDraft ? 'Idea: ' + sh.introDraft : 'Leave empty for footage only')}">${X.esc(sh.intro || '')}</textarea>
+          <span class="muted">${(sh.intro || '').trim() ? 'Record it, then upload it in "Preview and export".' : ''}</span></label>
       </div>
+      <details class="seg-vis short-media" ${(sh.startMedia || []).length ? 'open' : ''}><summary>Photos or videos at the start${(sh.startMedia || []).length ? ` (${sh.startMedia.length})` : ''}</summary>
+        ${stripHtml(sh.startMedia || [], sh.id + '|startMedia', casePhotos, 'Shown first, before your intro. Photos 3.5 seconds each; videos play with their sound.', 0)}
+      </details>
       ${sh.clips.map((k, j) => {
         const f = X.fileById(k.file);
         return `<div class="short-clip" data-k="${j}">
@@ -107,9 +117,14 @@ export function renderShorts() {
           <input data-sk="end" value="${X.fmtH(k.end)}"><button class="btn ghost small" data-sa="nudge" data-edge="end" data-d="1" type="button">+1s</button><button class="btn ghost small" data-sa="nudge" data-edge="end" data-d="5" type="button">+5s</button>
           <button class="btn ghost small" data-sa="sentence" type="button">Finish the sentence</button>
           <button class="btn ghost small" data-sa="faces" type="button">${X.blurredIn(f, k.start, k.end) ? 'Blurred faces (' + X.blurredIn(f, k.start, k.end) + ')' : 'Blur faces'}</button>
+          ${f && f.transcript ? `<button class="btn ghost small" data-sa="lines" type="button">${editLines.has(k.id) ? 'Done editing lines' : 'Edit lines (who said what)'}</button>` : ''}
           ${sh.clips.length > 1 ? '<button class="btn ghost small" data-sa="delclip" type="button" title="Remove this clip">✕</button>' : ''}
+          ${f && editLines.has(k.id) ? `<div class="tl-box short-lines" data-lines-for="${f.id}">${linesHtml(f, linesBetween(f, k.start, k.end))}</div>` : ''}
         </div>`;
       }).join('')}
+      <details class="seg-vis short-media" ${(sh.endMedia || []).length ? 'open' : ''}><summary>Photos or videos at the end${(sh.endMedia || []).length ? ` (${sh.endMedia.length})` : ''}</summary>
+        ${stripHtml(sh.endMedia || [], sh.id + '|endMedia', casePhotos, 'Shown after the clip. Photos 3.5 seconds each; videos play with their sound.', 0)}
+      </details>
       <div class="short-actions">
         <button class="btn primary" data-sa="open" type="button">Preview and export</button>
         <button class="btn ghost" data-sa="delete" type="button">Delete</button>
@@ -117,11 +132,108 @@ export function renderShorts() {
     </li>`;
   }).join('');
   $('shortsNote').textContent = list.length ? `${list.length} Short${list.length === 1 ? '' : 's'}.` : '';
+  $('shortsIntros').classList.toggle('hidden', !list.length);
+  fillThumbs($('shortsList'), list.flatMap(sh => [...(sh.startMedia || []), ...(sh.endMedia || [])]));
+}
+
+// ---------- intros to record ----------
+function clipText(f, a, b) {
+  const names = X.speakerMap(f);
+  return linesBetween(f, a, b).map(({ u }) => `${names[u.sp] || 'Speaker ' + u.sp}: ${u.text}`).join('\n');
+}
+async function writeIntros() {
+  const c = X.cur();
+  const list = shorts(c);
+  const todo = list.filter(sh => !(sh.intro || '').trim());
+  const which = todo.length ? todo : list;
+  if (!todo.length && !confirm('Every Short already has an intro. Write new ones for all of them? (Your current intros are replaced.)')) return;
+  const b = $('shortsIntros'); b.disabled = true; b.textContent = 'Writing intros…';
+  try {
+    const body = {
+      title: c.title, context: X.contextText(c),
+      shorts: which.map(sh => ({ id: sh.id, title: sh.title, description: sh.introDraft || sh.why || '', transcript: sh.clips.map(k => { const f = X.fileById(k.file); return f ? clipText(f, k.start, k.end) : ''; }).join('\n') })),
+    };
+    const r = await X.api('case/short-intros', body);
+    let n = 0;
+    for (const sh of which) if (r.intros && r.intros[sh.id]) { sh.intro = r.intros[sh.id]; sh.edited = true; n++; }
+    await X.save();
+    renderShorts();
+    if (X.refreshUsage) X.refreshUsage();
+    if (!n) alert('No intros came back. Try again in a moment.');
+  } catch (e) { alert('Writing the intros failed: ' + e.message); }
+  finally { b.disabled = false; b.textContent = 'Write intro scripts'; }
 }
 
 const parseTime = v => { const p = String(v).trim().split(':').map(Number); return p.some(isNaN) ? null : p.reduce((a, b) => a * 60 + b, 0); };
 
+// the Short and the list (startMedia / endMedia) a photo/video strip belongs to
+function stripOf(el) {
+  const box = el.closest('[data-scope]');
+  if (!box) return null;
+  const [id, field] = box.dataset.scope.split('|');
+  const sh = shorts(X.cur()).find(x => x.id === id);
+  if (!sh) return null;
+  sh[field] = sh[field] || [];
+  return { sh, items: sh[field], box };
+}
+
 function wire() {
+  $('shortsIntros').addEventListener('click', writeIntros);
+  $('shortsList').addEventListener('change', async e => {
+    if (e.target.closest('[data-tl]')) {
+      const f = X.fileById(e.target.closest('[data-lines-for]').dataset.linesFor);
+      if (f && await applyLineEdit(e, f)) renderShorts();
+      return;
+    }
+    if (!e.target.matches('[data-media-add], [data-case-photo], [data-media-replace]')) return;
+    const st = stripOf(e.target);
+    if (!st) return;
+    const c = X.cur();
+    const statusEl = st.box.querySelector('[data-status]');
+    const onStatus = t => { if (statusEl) statusEl.textContent = t; };
+    if (e.target.matches('[data-media-replace]')) {
+      const files = [...e.target.files]; e.target.value = '';
+      const k = st.items.findIndex(x => x.id === e.target.dataset.mediaReplace);
+      if (!files.length || k < 0) return;
+      onStatus('Adding…');
+      const { items, skipped } = await addFiles(c.id, files, onStatus);
+      if (items[0]) st.items[k] = items[0];
+      if (skipped.length) alert(`This could not be used: ${skipped.join(', ')}`);
+    } else if (e.target.matches('[data-media-add]')) {
+      const files = [...e.target.files]; e.target.value = '';
+      onStatus('Adding…');
+      const { items, skipped } = await addFiles(c.id, files, onStatus);
+      st.items.push(...items);
+      if (skipped.length) alert(`These were skipped (photos: JPG, PNG, WEBP; videos: MP4, MOV): ${skipped.join(', ')}`);
+    } else {
+      const f = X.fileById(e.target.value); e.target.value = '';
+      if (f) st.items.push(casePhotoItem(f));
+    }
+    st.sh.edited = true;
+    await X.save();
+    renderShorts();
+  }, true);
+  $('shortsList').addEventListener('click', async e => {
+    if (e.target.closest('[data-tl="split"], [data-tl="del"]')) {
+      const f = X.fileById(e.target.closest('[data-lines-for]').dataset.linesFor);
+      if (f && await applyLineEdit(e, f)) renderShorts();
+      return;
+    }
+    const mb = e.target.closest('[data-media]');
+    if (!mb) return;
+    e.stopPropagation();
+    const st = stripOf(mb);
+    if (!st) return;
+    const k = st.items.findIndex(x => x.id === mb.dataset.item);
+    if (k < 0) return;
+    if (mb.dataset.media === 'trim') return openTrim(st.items[k], 0, async () => { await X.save(); renderShorts(); });
+    if (mb.dataset.media === 'del') st.items.splice(k, 1);
+    else if (mb.dataset.media === 'left' && k > 0) [st.items[k - 1], st.items[k]] = [st.items[k], st.items[k - 1]];
+    else if (mb.dataset.media === 'right' && k < st.items.length - 1) [st.items[k + 1], st.items[k]] = [st.items[k], st.items[k + 1]];
+    st.sh.edited = true;
+    await X.save();
+    renderShorts();
+  }, true);
   $('shortsFind').addEventListener('click', async () => {
     const c = X.cur();
     if (!c) return;
@@ -189,6 +301,9 @@ function wire() {
       const f = X.fileById(k.file);
       if (f) X.openFaces(f, k.start, k.end);
       return;
+    } else if (act === 'lines' && k) {
+      if (editLines.has(k.id)) editLines.delete(k.id); else editLines.add(k.id);
+      return renderShorts();
     } else if (act === 'delclip' && k) {
       sh.clips = sh.clips.filter(x => x !== k);
     } else return;

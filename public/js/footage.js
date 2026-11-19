@@ -103,16 +103,24 @@ async function save() {
 let shortTarget = null, shortProxy = null;
 function shortView(c, sh) {
   const story = {
+    // your photos/videos first, then your intro (over the footage leading into the clip), the clip,
+    // and photos/videos at the end
     get segments() {
       const intro = (sh.intro || '').trim();
-      return (intro ? [{ id: sh.id + 'n', type: 'narration', text: intro }] : []).concat(sh.clips);
+      const segs = [];
+      if ((sh.startMedia || []).length) segs.push({ id: sh.id + 's', type: 'media', media: sh.startMedia });
+      if (intro) segs.push({ id: sh.id + 'n', type: 'narration', text: intro });
+      segs.push(...sh.clips);
+      if ((sh.endMedia || []).length) segs.push({ id: sh.id + 'e', type: 'media', media: sh.endMedia });
+      return segs;
     },
     trans: 'none',
   };
   return new Proxy(c, {
     get(t, k) {
       if (k === 'story') return story;
-      if (k === 'narr') return (sh.narr = sh.narr || {});
+      // a Short's intro plays over footage with its sound off (you can change it on the Final video tab)
+      if (k === 'narr') { sh.narr = sh.narr || {}; if (!sh.narr.opts) sh.narr.opts = { aspect: '9:16', duck: 0 }; return sh.narr; }
       if (k === 'narrKey') return `${c.id}:n:short${sh.id}`;
       if (k === 'title') return `${c.title} - ${sh.title || 'Short'}`;
       if (k === 'isShort') return true;
@@ -1157,7 +1165,7 @@ function wire() {
   initLines({ cur: () => cur, save, esc, fmtH, speakerMap });
   initWords({ api, putFile: (k, b) => store.putFile(k, b), getFile: k => store.getFile(k) });
   initMedia({ esc, fileById, getLocalFile, signedUrls, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
-  initShorts({ cur: () => cur, save, esc, fmtH, fileById, blurredIn, openFaces, openShort });
+  initShorts({ cur: () => cur, save, esc, fmtH, fileById, blurredIn, openFaces, openShort, api, contextText, speakerMap, refreshUsage });
   initFinish({ cur: finishCur, leaveShort, ensureRead, save, api, esc, fmtH, fileById, getLocalFile, linkOriginal, signedUrls, speakerMap, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
   initFaces({ esc, fmtH, save, getLocalFile, signedUrls, footageRanges: f => (footageRanges(cur)[f.id] || []), onFacesChanged: () => { renderStory(); renderShorts(); } });
   initStory({ cur: () => cur, contextText, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, openViewer, speakerMap, refreshUsage, NATIVE_VIDEO });

@@ -344,6 +344,7 @@
                 <label id="finFrameRow" class="hidden">Picture <select id="finFrame"><option value="big">Big picture, blurred background (recommended)</option><option value="fill">Full screen (sides cut off)</option></select></label>
                 <label>Format <select id="finAspect"><option value="16:9">16:9 (YouTube video)</option><option value="9:16">9:16 (Shorts)</option></select></label>
                 <label>Captions <select id="finCaps"><option value="off">Off</option><option value="footage">What people say in the footage</option><option value="narr">Your narration</option><option value="both">Both</option></select></label>
+                <label title="Drag to move the captions up or down (preview and export)">Caption position <input id="finCapY" type="range" min="0.3" max="0.94" step="0.01" value="0.88"></label>
                 <label>Footage sound under narration <input id="finDuck" type="range" min="0" max="40" step="5" value="15"> <span id="finDuckVal" class="mono">15%</span></label>
               </div>
               <div class="fin-opts">
@@ -385,6 +386,7 @@
               <p class="muted small-text">The app looks through the analysis it already has (no AI, no cost, nothing uploaded again) and suggests the strongest 30 to 60 second moments. Adjust each one, add an intro if you like (you record it yourself), then preview and export it as a 9:16 Short.</p>
               <div class="case-actions">
                 <button id="shortsFind" class="btn primary" type="button">Find Shorts moments</button>
+                <button id="shortsIntros" class="btn hidden" type="button" title="Gemini writes a 2 to 3 sentence intro for each Short (about 1 cent in total). You can edit them.">Write intro scripts</button>
                 <label class="small-text muted">How many <select id="shortsCount"><option>3</option><option selected>5</option><option>8</option></select></label>
                 <span id="shortsNote" class="muted small-text"></span>
               </div>

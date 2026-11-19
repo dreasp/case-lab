@@ -456,6 +456,38 @@ Return JSON:
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ---------- Shorts: a short intro to record for each Short ----------
+router.post('/case/short-intros', async (req, res) => {
+  try {
+    const { title, context, shorts } = req.body || {};
+    const list = (shorts || []).slice(0, 12);
+    const prompt = `${STYLE}
+
+You write the spoken intro for vertical YouTube Shorts / TikToks / Reels cut from real police footage of a true crime case. The creator records the intro in her own voice; the footage clip plays right after it.
+
+CASE: ${title || ''}
+CASE CONTEXT (written by the creator, trust it):
+"""${String(context || '').slice(0, 16000)}"""
+
+THE SHORTS:
+${list.map((x, i) => `--- SHORT ${i + 1} (id ${x.id}): "${x.title || ''}"
+What the clip shows: ${x.description || ''}
+What is said in the clip:
+${String(x.transcript || '').slice(0, 2500)}`).join('\n\n')}
+
+For each Short write an intro of 2 or 3 sentences, about 8 to 15 seconds read aloud (25 to 40 words), that tells a new viewer who knows nothing about the case what they are about to watch: who, where and when (month and year), and why this moment matters. The first sentence must hook the viewer.
+- Victim-centered, factual, serious. Say "police say" or "alleged" where something is not proven. Never sensational or gory.
+- Don't give away the outcome of the case (verdict, sentence), and don't retell what the clip itself shows.
+- Full, flowing sentences written to be read aloud. Never use em dashes.
+
+Return JSON: { "intros": [ { "id": the short's id, "text": the intro } ] }`;
+    const out = await generateJSON([{ text: prompt }], { temperature: 0.6 });
+    const intros = {};
+    for (const x of (out && out.intros) || []) if (x && x.id && x.text) intros[String(x.id)] = String(x.text).replace(/\s*[—–]\s*/g, ', ').trim();
+    res.json({ intros });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ---------- Online research: what news and court sources say about the case ----------
 router.post('/case/web-research', async (req, res) => {
   try {
