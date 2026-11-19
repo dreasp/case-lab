@@ -189,7 +189,7 @@ export function renderFinish() {
   const n = c.narr || {};
   const o = n.opts || {};
   $('finAspect').value = o.aspect || '16:9';
-  $('finCaps').value = o.caps || 'footage';
+  $('finCaps').value = (o.caps || (c.isShort ? 'both' : 'footage'));
   $('finDuck').value = o.duck != null ? o.duck : 15;
   $('finDuckVal').textContent = $('finDuck').value + '%';
   $('finCapY').value = capYOf(c);
@@ -318,6 +318,7 @@ function buildPlan(c, matched) {
 const cap = s => String(s || '').replace(/^./, x => x.toUpperCase());
 // Caption colors per speaker (readable on the dark caption box)
 const SPEAKER_COLORS = ['#ffffff', '#ffd84d', '#7fdcff', '#9be89b', '#ff9fcf', '#ffb26b', '#c7a6ff'];
+const NARR_COLOR = '#ff7a6b'; // coral: used only for your narration
 function splitCue(q, max) {
   if (q.words.length <= max) return [q];
   const out = [];
@@ -336,7 +337,8 @@ async function captionCues(plan, mode, aspect, isSwear = null) {
     for (const sg of plan.segs.filter(x => x.kind === 'narr')) {
       const off = sg.t0 + LEAD - sg.match.a0;
       const words = sg.match.words.map(w => ({ w: w.w, p: 0, s: w.s + off, e: w.e + off }));
-      all = all.concat(buildCues(words, preset));
+      // your narration has its own color, so it stands apart from the people in the footage
+      all = all.concat(buildCues(words, preset).map(q => ({ ...q, color: NARR_COLOR })));
     }
   }
   if (mode === 'footage' || mode === 'both') {
@@ -633,7 +635,7 @@ async function exportVideo() {
     const job = {
       aspect, bitrate: aspect === '9:16' ? 10_000_000 : 12_000_000,
       sources, segs, narration: pcm, narrGain, fileHandle,
-      captions: await captionCues(plan, opts.caps || 'footage', aspect, opts.mute !== false ? muteMatcher(muteList()) : null),
+      captions: await captionCues(plan, (opts.caps || (c.isShort ? 'both' : 'footage')), aspect, opts.mute !== false ? muteMatcher(muteList()) : null),
       watermark: await watermarkJob(opts),
       muteHow: opts.muteHow || 'silence',
       cuts: plan.segs.map(sg => ({ T: sg.t0, kind: sg.trans || 'none' })),
@@ -729,7 +731,7 @@ async function previewFinal() {
   if (X.ensureRead) await X.ensureRead([...plan.files].map(id => X.fileById(id)).filter(Boolean));
   const isSwear = opts.mute !== false ? muteMatcher(muteList()) : null;
   const tall = !!c.isShort;
-  const caps = await captionCues(plan, opts.caps || 'footage', '16:9', isSwear);
+  const caps = await captionCues(plan, (opts.caps || (c.isShort ? 'both' : 'footage')), '16:9', isSwear);
   let nurl = '';
   if (narrParts(c).length) { try { nurl = await narrSrc(); } catch (e) { return alert(e.message); } }
   $('fpStage').classList.toggle('tall', tall);
@@ -737,7 +739,7 @@ async function previewFinal() {
   const logo = opts.wm !== false ? await getLogo() : null;
   $('fpWm').classList.toggle('hidden', !logo);
   if (logo) $('fpWm').src = logoUrl;
-  PV = { wm: logo ? wmSettings() : null, plan, capMode: opts.caps || 'footage', isSwear, cues: caps ? caps.cues : [], mutes, i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), faces: new Map(plan.segs.filter(sg => sg.pic && sg.pic.file && blurData(sg.pic.file)).map(sg => [sg.pic.file.id, blurData(sg.pic.file)])), cut: null, frame: tall ? shortFrame(c) : null, hook: tall && (c.hook || '').trim() ? c.hook.trim() : '', urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
+  PV = { wm: logo ? wmSettings() : null, plan, capMode: (opts.caps || (c.isShort ? 'both' : 'footage')), isSwear, cues: caps ? caps.cues : [], mutes, i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), faces: new Map(plan.segs.filter(sg => sg.pic && sg.pic.file && blurData(sg.pic.file)).map(sg => [sg.pic.file.id, blurData(sg.pic.file)])), cut: null, frame: tall ? shortFrame(c) : null, hook: tall && (c.hook || '').trim() ? c.hook.trim() : '', urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
   if (nurl) $('fpNarr').src = nurl; else $('fpNarr').removeAttribute('src');
   placeCaptions(capYOf(c));
   $('fpTotal').textContent = X.fmtH(plan.total);
