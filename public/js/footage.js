@@ -1269,7 +1269,11 @@ function wire() {
   // Chrome has no room left for Case Lab on this computer
   window.addEventListener('caselab-storage-full', async () => {
     let space = '';
-    try { const e = await navigator.storage.estimate(); space = ` (Case Lab uses ${mb(e.usage)} of the ${mb(e.quota)} Chrome allows it right now)`; } catch (x) { /* not available */ }
+    try {
+      const e = await navigator.storage.estimate();
+      if (e.quota && e.usage < e.quota * 0.8) return; // plenty of room: the error has another cause, don't alarm
+      space = ` (Case Lab uses ${mb(e.usage)} of the ${mb(e.quota)} Chrome allows it right now)`;
+    } catch (x) { /* not available */ }
     if (confirm(`Chrome is out of storage space for Case Lab on this computer${space}. This can make pages load slowly or stay blank, and videos not play.\n\nClick OK to remove the copies Case Lab keeps on this computer of files that are already safe in the cloud (they download again when needed). Nothing is lost.\n\nIt also helps to free space on your C: drive (empty the Recycle Bin, clear Downloads).`)) {
       const n = await store.freeLocal();
       alert(`Done: removed ${n} local cop${n === 1 ? 'y' : 'ies'}. Refresh the page.`);
