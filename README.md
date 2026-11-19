@@ -25,6 +25,7 @@ One app for two jobs:
 | `R2_BUCKET` | R2 bucket name, e.g. `case-lab` |
 | `ASSEMBLYAI_API_KEY` | AssemblyAI key, for word-by-word caption timing |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google Cloud OAuth client (YouTube Data API v3), for posting Shorts to YouTube. Redirect URI: `https://<app>/api/social/youtube/callback` |
+| `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET` | TikTok developer app (Login Kit + Content Posting API, scopes `user.info.basic`, `video.upload`), for sending Shorts to the TikTok inbox. Redirect URI: `https://<app>/api/social/tiktok/callback` |
 | `IG_APP_ID` / `IG_APP_SECRET` | Meta app, "Instagram API with Instagram login", for posting Reels. Redirect URI: `https://<app>/api/social/instagram/callback` |
 
 Without the cloud settings, projects are saved in the browser only. With them, every project is saved in the browser and in the cloud, so it opens on any computer. Check the setup at `/api/cloud/check`.

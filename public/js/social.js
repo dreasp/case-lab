@@ -1,5 +1,5 @@
 // Posting a Short: post details (Gemini), YouTube and Instagram now or at a set time, and TikTok by
-// hand (download the video, copy the caption). The server does the posting (api/social.js).
+// TikTok as a draft in the TikTok inbox (finish the post in the app; download + copy caption also work). The server does the posting (api/social.js).
 
 const $ = id => document.getElementById(id);
 let X = null;
@@ -9,7 +9,9 @@ let postsFor = null;
 let pollTimer = null;
 const busy = new Set();     // shorts whose details are being written
 
-const NAMES = { youtube: 'YouTube', instagram: 'Instagram' };
+const NAMES = { youtube: 'YouTube', instagram: 'Instagram', tiktok: 'TikTok' };
+const PFS = ['youtube', 'instagram', 'tiktok'];
+const DEF_TO = { youtube: true, instagram: true, tiktok: true };
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const when = t => {
   const d = new Date(t);
@@ -57,17 +59,17 @@ async function refreshPosts() {
 function renderAccounts() {
   const el = $('socialAccounts');
   if (!status) { el.innerHTML = ''; return; }
-  el.innerHTML = `<span class="muted small-text">Accounts for posting:</span> ${['youtube', 'instagram'].map(pf => {
+  el.innerHTML = `<span class="muted small-text">Accounts for posting:</span> ${PFS.map(pf => {
     const s = status[pf];
     if (!s.ready) return `<span class="acc off small-text" title="Add the keys on Render to turn this on">${NAMES[pf]}: not set up yet</span>`;
     return s.connected
       ? `<span class="acc on small-text">${NAMES[pf]}: ${X.esc(s.name)} <button class="btn ghost small" data-acc="disconnect" data-pf="${pf}" type="button">Disconnect</button></span>`
       : `<button class="btn small" data-acc="connect" data-pf="${pf}" type="button">Connect ${NAMES[pf]}</button>`;
-  }).join(' ')} <span class="acc small-text muted">TikTok: by hand (download and copy the caption)</span>`;
+  }).join(' ')}`;
 }
 
 const STATUS = {
-  queued: 'Uploading…', posting: 'Posting…', scheduled: 'Scheduled', 'scheduled-remote': 'Scheduled on YouTube', posted: 'Posted', failed: 'Failed',
+  queued: 'Uploading…', posting: 'Posting…', scheduled: 'Scheduled', 'scheduled-remote': 'Scheduled on YouTube', posted: 'Posted', drafted: 'In your TikTok inbox', failed: 'Failed',
 };
 
 // The "Post it" section of a Short card
@@ -76,8 +78,8 @@ export function postHtml(c, sh) {
   const v = sh.video;
   const mine = postsFor === c.id ? posts.filter(x => x.short === sh.id) : [];
   const conn = pf => status && status[pf] && status[pf].connected;
-  const anyConn = conn('youtube') || conn('instagram');
-  const pick = sh.postTo || { youtube: true, instagram: true };
+  const anyConn = PFS.some(conn);
+  const pick = sh.postTo || DEF_TO;
   const badge = mine.length ? ` · ${mine.filter(x => x.status === 'posted').length} posted, ${mine.filter(x => /scheduled/.test(x.status)).length} scheduled` : '';
   return `<details class="seg-vis short-post" data-post="${sh.id}" ${sh.postOpen ? 'open' : ''}><summary>Post it (YouTube, Instagram, TikTok)${badge}</summary>
     <div class="sp-body">
@@ -92,7 +94,7 @@ export function postHtml(c, sh) {
       <label class="small-text">Hashtags (separated by spaces)<input data-pf="hashtags" value="${X.esc(hashtags(p))}"></label>
       <div class="sp-row"><button class="btn ghost small" data-sp="copy" type="button">Copy caption (description and hashtags)</button></div>
       <div class="sp-row small-text">Post to:
-        ${['youtube', 'instagram'].map(pf => `<label class="${conn(pf) ? '' : 'muted'}"><input type="checkbox" data-sp="to" data-pf="${pf}" ${conn(pf) && pick[pf] ? 'checked' : ''} ${conn(pf) ? '' : 'disabled'}> ${NAMES[pf]}${conn(pf) ? '' : ' (connect it above)'}</label>`).join(' ')}
+        ${PFS.map(pf => `<label class="${conn(pf) ? '' : 'muted'}"><input type="checkbox" data-sp="to" data-pf="${pf}" ${conn(pf) && pick[pf] ? 'checked' : ''} ${conn(pf) ? '' : 'disabled'}> ${NAMES[pf]}${conn(pf) ? '' : ' (connect it above)'}</label>`).join(' ')}
       </div>
       <div class="sp-row small-text">
         <label><input type="radio" name="spw-${sh.id}" data-sp="now" ${sh.postAt ? '' : 'checked'}> Now</label>
@@ -109,7 +111,7 @@ export function postHtml(c, sh) {
           : x.status !== 'posting' && x.status !== 'queued' ? `<button class="btn ghost small" data-sp="remove" data-id="${x.id}" type="button" title="Removes it from this list only">Hide</button>` : ''}
         ${x.status === 'scheduled-remote' ? '<div class="muted">To change or cancel it, use YouTube Studio.</div>' : ''}
       </li>`).join('')}</ul>` : ''}
-      <div class="muted small-text">TikTok: click Download (or open the app on your phone and download it there), then upload it in TikTok and paste the caption.${status && status.instagram && status.instagram.connected ? ' Scheduled Instagram posts go out when the time comes, as long as the app is kept awake.' : ''}</div>
+      <div class="muted small-text">${conn('tiktok') ? 'TikTok gets the video in its inbox right away (even when you pick a time): open TikTok, tap the notification, paste the caption and post.' : 'TikTok: connect it above to send the video to your TikTok inbox, or click Download and upload it in TikTok Studio.'}${status && status.instagram && status.instagram.connected ? ' Scheduled Instagram posts go out when the time comes, as long as the app is kept awake.' : ''}</div>
     </div>
   </details>`;
 }
@@ -133,7 +135,7 @@ export function wireSocialList(list, shortById) {
     const k = e.target.dataset.sp;
     if (!sh || !k) return;
     if (k === 'title') { sh.post.title = sh.post.titles[+e.target.dataset.i]; }
-    else if (k === 'to') { sh.postTo = { ...(sh.postTo || { youtube: true, instagram: true }), [e.target.dataset.pf]: e.target.checked }; }
+    else if (k === 'to') { sh.postTo = { ...(sh.postTo || DEF_TO), [e.target.dataset.pf]: e.target.checked }; }
     else if (k === 'now') sh.postAt = '';
     else if (k === 'later' || k === 'at') {
       const input = e.target.closest('[data-post]').querySelector('[data-sp="at"]');
@@ -193,7 +195,7 @@ async function writeDetails(c, sh) {
 
 async function post(c, sh, b) {
   const p = sh.post || {};
-  const to = ['youtube', 'instagram'].filter(pf => status && status[pf] && status[pf].connected && (sh.postTo || { youtube: true, instagram: true })[pf]);
+  const to = PFS.filter(pf => status && status[pf] && status[pf].connected && (sh.postTo || DEF_TO)[pf] !== false);
   if (!to.length) return alert('Pick where to post it.');
   if (!(p.title || '').trim() && to.includes('youtube')) return alert('Add a title first (or click "Write post details").');
   if (!(p.description || '').trim()) return alert('Add a description first (or click "Write post details").');
@@ -204,7 +206,10 @@ async function post(c, sh, b) {
   }
   const again = posts.filter(x => x.short === sh.id && to.includes(x.platform) && x.status !== 'failed');
   if (again.length && !confirm(`This Short was already sent to ${[...new Set(again.map(x => NAMES[x.platform]))].join(' and ')}. Post it again?`)) return;
-  if (!confirm(`${publishAt ? 'Schedule' : 'Post'} "${p.title || sh.title}" on ${to.map(x => NAMES[x]).join(' and ')}${publishAt ? ' for ' + when(publishAt) : ' now'}?`)) return;
+  const later = to.filter(x => x !== 'tiktok');
+  const msg = [later.length ? `${publishAt ? 'Schedule' : 'Post'} "${p.title || sh.title}" on ${later.map(x => NAMES[x]).join(' and ')}${publishAt ? ' for ' + when(publishAt) : ' now'}.` : '',
+    to.includes('tiktok') ? 'Send it to your TikTok inbox now (you finish the post in the TikTok app).' : ''].filter(Boolean).join('\n');
+  if (!confirm(msg + '\n\nGo ahead?')) return;
   b.disabled = true; b.textContent = 'Sending…';
   try {
     await X.api('social/posts', {

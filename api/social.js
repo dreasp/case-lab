@@ -4,7 +4,8 @@
 // streamed from R2 and does the scheduling itself (the video is uploaded right away as private with a
 // publish time). Instagram can't schedule through its API, so a scheduled Reel waits here and is
 // posted by the check that runs every minute while the app is awake (a free pinger keeps it awake).
-// TikTok only lets audited apps post publicly, so TikTok is done by hand (download + copy caption).
+// TikTok only lets audited apps post publicly, so Case Lab sends the Short to the TikTok inbox as a
+// draft: a notification in the TikTok app opens it, and the caption is pasted and posted from there.
 
 const crypto = require('crypto');
 const express = require('express');
@@ -14,6 +15,8 @@ const router = express.Router();
 const IG_V = 'v23.0';
 const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly';
 const IG_SCOPES = 'instagram_business_basic,instagram_business_content_publish';
+const TT_SCOPES = 'user.info.basic,video.upload';
+const NAME = { youtube: 'YouTube', instagram: 'Instagram', tiktok: 'TikTok' };
 
 // ---------- tables ----------
 let ready = null;
@@ -45,6 +48,7 @@ async function setAccount(platform, data) {
 const configured = {
   youtube: () => !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
   instagram: () => !!(process.env.IG_APP_ID && process.env.IG_APP_SECRET),
+  tiktok: () => !!(process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET),
 };
 const baseUrl = req => (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
 const redirectUri = (req, platform) => `${baseUrl(req)}/api/social/${platform}/callback`;
@@ -64,7 +68,7 @@ router.get('/social/status', async (req, res) => {
   try {
     const out = {};
     const hasDb = !!(await db().catch(() => null));
-    for (const pf of ['youtube', 'instagram']) {
+    for (const pf of ['youtube', 'instagram', 'tiktok']) {
       const a = hasDb ? await getAccount(pf).catch(() => null) : null;
       out[pf] = { ready: configured[pf]() && hasDb, connected: !!a, name: a ? a.name : '' };
     }
@@ -77,13 +81,14 @@ router.get('/social/status', async (req, res) => {
 router.get('/social/:platform/connect', (req, res) => {
   const pf = req.params.platform;
   if (!configured[pf]) return res.status(404).send('Unknown platform');
-  if (!configured[pf]()) return res.status(400).send(page(`${pf === 'youtube' ? 'YouTube' : 'Instagram'} is not set up yet. Add the keys on Render first (see the setup steps).`));
+  if (!configured[pf]()) return res.status(400).send(page(`${NAME[pf]} is not set up yet. Add the keys on Render first (see the setup steps).`));
   const state = crypto.randomBytes(16).toString('hex');
   res.cookie('caselab_oauth', state, { httpOnly: true, sameSite: 'lax', secure: req.secure, maxAge: 15 * 60 * 1000 });
   const q = pf === 'youtube'
     ? new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID, redirect_uri: redirectUri(req, pf), response_type: 'code', scope: GOOGLE_SCOPES, access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true', state })
-    : new URLSearchParams({ client_id: process.env.IG_APP_ID, redirect_uri: redirectUri(req, pf), response_type: 'code', scope: IG_SCOPES, state });
-  res.redirect((pf === 'youtube' ? 'https://accounts.google.com/o/oauth2/v2/auth?' : 'https://www.instagram.com/oauth/authorize?') + q);
+    : pf === 'instagram' ? new URLSearchParams({ client_id: process.env.IG_APP_ID, redirect_uri: redirectUri(req, pf), response_type: 'code', scope: IG_SCOPES, state })
+      : new URLSearchParams({ client_key: process.env.TIKTOK_CLIENT_KEY, redirect_uri: redirectUri(req, pf), response_type: 'code', scope: TT_SCOPES, state });
+  res.redirect({ youtube: 'https://accounts.google.com/o/oauth2/v2/auth?', instagram: 'https://www.instagram.com/oauth/authorize?', tiktok: 'https://www.tiktok.com/v2/auth/authorize/?' }[pf] + q);
 });
 
 function page(msg, ok = false) {
@@ -102,7 +107,7 @@ function readCookie(req, name) {
 
 router.get('/social/:platform/callback', async (req, res) => {
   const pf = req.params.platform;
-  const name = pf === 'youtube' ? 'YouTube' : 'Instagram';
+  const name = NAME[pf] || pf;
   try {
     if (!configured[pf]) return res.status(404).send('Unknown platform');
     if (req.query.error) return res.send(page(`${name} was not connected (${req.query.error_description || req.query.error}).`));
@@ -121,6 +126,16 @@ router.get('/social/:platform/callback', async (req, res) => {
       if (!c) throw new Error('This Google account has no YouTube channel. Pick the account (or brand account) of your channel.');
       await setAccount('youtube', { access: t.access_token, refresh: t.refresh_token, expires: Date.now() + (t.expires_in || 3600) * 1000, id: c.id, name: c.snippet.title });
       return res.send(page(`YouTube is connected (${c.snippet.title}).`, true));
+    }
+    if (pf === 'tiktok') {
+      const t = await tiktokTokens({ code, grant_type: 'authorization_code', redirect_uri: redirectUri(req, pf) });
+      let display = 'TikTok account';
+      try {
+        const u = await readJson(await fetch('https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name', { headers: { Authorization: `Bearer ${t.access_token}` } }));
+        display = (u.data && u.data.user && u.data.user.display_name) || display;
+      } catch (e) { /* the name is only for show */ }
+      await setAccount('tiktok', { ...ttAccount(t), name: display });
+      return res.send(page(`TikTok is connected (${display}).`, true));
     }
     // Instagram: short-lived token, then the 60-day token
     const t = await readJson(await fetch('https://api.instagram.com/oauth/access_token', {
@@ -174,6 +189,27 @@ async function instagramToken() {
     } catch (e) { console.warn('Instagram token refresh failed:', e.message); }
   }
   return a;
+}
+
+// TikTok tokens last 24 hours; the refresh token lasts a year
+async function tiktokTokens(params) {
+  const r = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_key: process.env.TIKTOK_CLIENT_KEY, client_secret: process.env.TIKTOK_CLIENT_SECRET, ...params }),
+  });
+  const t = await readJson(r);
+  if (!t.access_token) throw new Error(t.error_description || t.error || 'TikTok did not give access.');
+  return t;
+}
+const ttAccount = t => ({ access: t.access_token, refresh: t.refresh_token, expires: Date.now() + (t.expires_in || 86400) * 1000, refreshExpires: Date.now() + (t.refresh_expires_in || 31536000) * 1000, id: t.open_id });
+async function tiktokToken() {
+  const a = await getAccount('tiktok');
+  if (!a) throw new Error('TikTok is not connected.');
+  if (a.expires > Date.now() + 120000) return a.access;
+  let t;
+  try { t = await tiktokTokens({ grant_type: 'refresh_token', refresh_token: a.refresh }); } catch (e) { throw new Error('TikTok access ran out. Click Disconnect, then Connect TikTok again.'); }
+  await setAccount('tiktok', { ...a, ...ttAccount(t) });
+  return t.access_token;
 }
 
 // ---------- posting ----------
@@ -238,6 +274,44 @@ async function postInstagram(post, mark) {
   return { remote_id: pub.id, link: link || 'https://www.instagram.com/' + a.name.replace('@', ''), status: 'posted' };
 }
 
+// Sends the Short to the TikTok inbox (drafts): the video is streamed from R2 in pieces
+async function postTikTok(post) {
+  const token = await tiktokToken();
+  const url = await cloud.signedUrl(post.key, 'GET', {}, 6 * 3600);
+  const head = await fetch(url, { headers: { Range: 'bytes=0-0' } });
+  const size = Number(((head.headers.get('content-range') || '').split('/')[1]) || head.headers.get('content-length'));
+  if (!head.ok || !size) throw new Error('The exported Short is not in the cloud any more. Export it again.');
+  // TikTok wants pieces of 5 to 64 MB (the last one takes the rest); a small file goes in one piece
+  const CHUNK = 10 * 1024 * 1024;
+  const one = size <= 64 * 1024 * 1024;
+  const chunk = one ? size : CHUNK;
+  const count = one ? 1 : Math.floor(size / CHUNK);
+  const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=UTF-8' };
+  const init = await readJson(await fetch('https://open.tiktokapis.com/v2/post/publish/inbox/video/init/', {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ source_info: { source: 'FILE_UPLOAD', video_size: size, chunk_size: chunk, total_chunk_count: count } }),
+  }));
+  const d = init.data || {};
+  if (!d.upload_url) throw new Error((init.error && init.error.message) || 'TikTok did not accept the upload.');
+  for (let i = 0; i < count; i++) {
+    const a = i * chunk, b = i === count - 1 ? size - 1 : a + chunk - 1;
+    const part = await fetch(url, { headers: { Range: `bytes=${a}-${b}` } });
+    if (!part.ok) throw new Error('Reading the exported Short failed. Try again.');
+    const body = Buffer.from(await part.arrayBuffer());
+    const up = await fetch(d.upload_url, { method: 'PUT', headers: { 'Content-Type': 'video/mp4', 'Content-Length': String(body.length), 'Content-Range': `bytes ${a}-${b}/${size}` }, body });
+    if (!up.ok) throw new Error(`TikTok stopped the upload (${up.status}).`);
+  }
+  // wait until it's in the inbox
+  for (let i = 0; i < 24; i++) {
+    await sleep(5000);
+    const st = await readJson(await fetch('https://open.tiktokapis.com/v2/post/publish/status/fetch/', { method: 'POST', headers: auth, body: JSON.stringify({ publish_id: d.publish_id }) })).catch(() => null);
+    const s = st && st.data && st.data.status;
+    if (s === 'FAILED') throw new Error(`TikTok could not use the video (${st.data.fail_reason || 'unknown reason'}).`);
+    if (s === 'SEND_TO_USER_INBOX' || s === 'PUBLISH_COMPLETE') break;
+  }
+  return { remote_id: d.publish_id, link: null, status: 'drafted', note: 'Open TikTok and tap the notification to finish the post (paste the caption).' };
+}
+
 const running = new Set();
 async function runPost(id) {
   if (running.has(id)) return;
@@ -250,7 +324,7 @@ async function runPost(id) {
     post.publish_at = post.publish_at == null ? null : Number(post.publish_at);
     const mark = fields => p.query(`UPDATE social_posts SET ${Object.keys(fields).map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated = ${Date.now()} WHERE id = $1`, [id, ...Object.values(fields)]);
     try {
-      const out = post.platform === 'youtube' ? await postYouTube(post) : await postInstagram(post, mark);
+      const out = post.platform === 'youtube' ? await postYouTube(post) : post.platform === 'tiktok' ? await postTikTok(post) : await postInstagram(post, mark);
       await mark({ status: out.status, link: out.link, remote_id: out.remote_id, error: out.note || null });
     } catch (e) {
       await mark({ status: 'failed', error: e.message.slice(0, 500) });
@@ -290,11 +364,11 @@ router.post('/social/posts', async (req, res) => {
     if (at && at > Date.now() + 120 * 86400000) return res.status(400).json({ error: 'Pick a time within the next 4 months.' });
     const out = [];
     for (const pf of [...new Set(platforms || [])]) {
-      if (!configured[pf] || !(await getAccount(pf))) return res.status(400).json({ error: `${pf === 'youtube' ? 'YouTube' : 'Instagram'} is not connected.` });
+      if (!configured[pf] || !(await getAccount(pf))) return res.status(400).json({ error: `${NAME[pf] || pf} is not connected.` });
       const tagList = (Array.isArray(tags) ? tags : []).map(t => String(t).replace(/^#/, '').trim()).filter(Boolean).slice(0, 30);
       const r = await p.query(`INSERT INTO social_posts (platform, project, short, key, title, caption, tags, publish_at, status, created, updated)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) RETURNING *`,
-      [pf, project, short, key, String(title || '').slice(0, 100), String(caption || '').slice(0, 5000), JSON.stringify(tagList), at, at && pf === 'instagram' ? 'scheduled' : 'queued', Date.now()]);
+      [pf, project, short, key, String(title || '').slice(0, 100), String(caption || '').slice(0, 5000), JSON.stringify(tagList), pf === 'tiktok' ? null : at, at && pf === 'instagram' ? 'scheduled' : 'queued', Date.now()]);
       out.push(PUBLIC(r.rows[0]));
       // YouTube is uploaded right away (it holds the video until the publish time); Instagram waits
       if (!(at && pf === 'instagram' && at > Date.now() + 30000)) runPost(r.rows[0].id);
