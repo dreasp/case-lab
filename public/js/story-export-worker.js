@@ -255,6 +255,9 @@ async function run(job) {
   const problems = [];
   const segs = job.segs;
   const total = segs.length ? segs[segs.length - 1].t0 + segs[segs.length - 1].dur : 0;
+  // soft fade out at the end (picture to black, sound down)
+  const FADE_OUT = Math.min(1.2, total / 4);
+  const endSample = Math.round(total * SR), fadeSamples = Math.max(1, Math.round(FADE_OUT * SR));
 
   let writable = null, target;
   if (job.fileHandle) { writable = await job.fileHandle.createWritable(); target = new Mp4Muxer.FileSystemWritableFileStreamTarget(writable); }
@@ -299,7 +302,12 @@ async function run(job) {
     for (let i = 0; i < n; i += 4800) {
       const len = Math.min(4800, n - i);
       const data = new Float32Array(len * 2);
-      for (let k = 0; k < len; k++) { const s = limit(mix[i + k]); data[k] = s; data[len + k] = s; }
+      for (let k = 0; k < len; k++) {
+        let s = limit(mix[i + k]);
+        const g = startIdx + i + k; // the very end of the video fades out softly
+        if (g > endSample - fadeSamples) s *= Math.max(0, (endSample - g) / fadeSamples);
+        data[k] = s; data[len + k] = s;
+      }
       const ad = new AudioData({ format: 'f32-planar', sampleRate: SR, numberOfFrames: len, numberOfChannels: 2, timestamp: Math.round((startIdx + i) * 1e6 / SR), data });
       aenc.encode(ad); ad.close();
       if (aenc.encodeQueueSize > 30) await sleep(1);
@@ -417,6 +425,7 @@ async function run(job) {
     if (job.hook && t < job.hook.dur) CaseDraw.drawHook(octx, W, H, job.hook.text, t, job.hook.dur);
     if (job.captions) CaseDraw.drawCaptions(octx, W, H, job.captions.cues, t, job.captions.style);
     if (job.watermark) CaseDraw.drawWatermark(octx, job.watermark.img, W, H, t, job.watermark);
+    if (t > total - FADE_OUT) { const fx = layered ? octx : ctx; fx.save(); fx.globalAlpha = Math.min(1, (t - (total - FADE_OUT)) / FADE_OUT); fx.fillStyle = '#000'; fx.fillRect(0, 0, W, H); fx.restore(); }
     const frame = new VideoFrame(out, { timestamp: Math.round(k * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
     enc.encode(frame, { keyFrame: k % (FPS * 2) === 0 });
     frame.close();

@@ -786,7 +786,12 @@ function drawPicture(x, W, H, withBlur) {
     if (faces) CaseDraw.blurBoxes(x, CaseDraw.mediaRect(V, W, H, fr, 1, true), CaseDraw.faceBoxesAt(faces, V.currentTime + (PV.vidOffset || 0)));
     return true;
   }
-  if (!IMG.classList.contains('hidden') && IMG.naturalWidth) { CaseDraw.drawMedia(x, IMG, W, H, { mode: 'auto' }, 1, false); return true; }
+  if (!IMG.classList.contains('hidden') && IMG.naturalWidth) {
+    // keep the slow zoom on photos (the same as the export)
+    const z = +((IMG.style.transform || '').match(/scale\(([\d.]+)\)/) || [])[1] || 1;
+    CaseDraw.drawMedia(x, IMG, W, H, { mode: 'auto' }, z, false);
+    return true;
+  }
   return false;
 }
 function snapshotNow() {
@@ -812,6 +817,9 @@ function drawFx(T) {
   if (next && next.trans === 'black' && next.t0 - T <= CaseDraw.TRANSITIONS.black.d / 2 && next.t0 > T) CaseDraw.drawTransition(x, W, H, 'black', T - next.t0, null);
   if (sg.card) { const a = sg.card.at || 0; if (into >= a && into < a + (sg.card.dur || 6)) CaseDraw.drawInfoCard(x, W, H, sg.card, into - a); }
   if (PV.hook && T < 4) CaseDraw.drawHook(x, W, H, PV.hook, T, 4);
+  // soft fade out at the very end (as in the export)
+  const fo = Math.min(1.2, PV.plan.total / 4);
+  if (T > PV.plan.total - fo) { x.save(); x.globalAlpha = Math.min(1, (T - (PV.plan.total - fo)) / fo); x.fillStyle = '#000'; x.fillRect(0, 0, W, H); x.restore(); }
 }
 
 const nowT = () => PV.playing ? PV.base + (performance.now() - PV.wall) / 1000 : PV.base;
