@@ -98,7 +98,7 @@ export const cloudStore = {
 
   async listProjects() {
     const local = await store.listProjects();
-    const map = new Map(local.map(p => [p.id, { id: p.id, kind: p.kind || 'broll', title: p.title, updated: p.updated, duration: p.duration, shotCount: (p.shots || []).length, fileCount: (p.files || []).length }]));
+    const map = new Map(local.map(p => [p.id, { id: p.id, kind: p.kind || 'broll', title: p.title, updated: p.updated, duration: p.duration, shotCount: p.shotCount || 0, fileCount: p.fileCount || 0 }]));
     if ((await cloudStatus()).projects) {
       try {
         const { projects, deleted = [] } = await call('cloud/projects');
@@ -113,10 +113,12 @@ export const cloudStore = {
     return [...map.values()].sort((a, b) => (b.updated || 0) - (a.updated || 0));
   },
 
+  // Returns what was removed from cloud storage: { removed, freedBytes, left } (or { error })
   async deleteProject(id) {
     clearTimeout(timers.get(id));
     await store.deleteProject(id);
-    if ((await cloudStatus()).projects) await track(() => call(`cloud/projects/${id}`, { method: 'DELETE' })).catch(() => {});
+    if (!(await cloudStatus()).projects) return {};
+    try { return await track(() => call(`cloud/projects/${id}`, { method: 'DELETE' })); } catch (e) { return { error: e.message }; }
   },
 
   // Saves a file and makes sure at least one copy really exists (in this browser or the cloud).
@@ -155,18 +157,6 @@ export const cloudStore = {
   },
 };
 
-// Files a project uses: the narration and anything uploaded with "Upload my own"
-// (footage cases: the recorded narration and your photos/videos in story scenes)
-function fileKeys(p) {
-  const keys = new Set([p.id + ':audio']);
-  for (const s of p.shots || []) if (s.choice && s.choice.custom) keys.add(s.choice.custom);
-  if (p.kind === 'case') {
-    keys.add(`${p.id}:n:narration`);
-    for (const s of (p.story && p.story.segments) || []) for (const m of s.media || []) if (m.key) keys.add(m.key);
-  }
-  return [...keys];
-}
-
 // Copy anything that only exists in this browser up to the cloud (runs after login)
 export async function syncAll() {
   const st = await cloudStatus();
@@ -174,12 +164,13 @@ export async function syncAll() {
   let cloud = [], deleted = [];
   try { ({ projects: cloud, deleted = [] } = await call('cloud/projects')); } catch (e) { lastError = e.message; emit(); return; }
   const cloudMap = new Map(cloud.map(c => [c.id, c]));
-  for (const p of await store.listProjects()) {
-    if (deleted.includes(p.id)) { await store.deleteProject(p.id); continue; }
-    const c = cloudMap.get(p.id);
-    if (!c || (p.updated || 0) > (c.updated || 0)) await pushProject(p).catch(() => {});
+  for (const m of await store.listProjects()) {
+    if (deleted.includes(m.id)) { await store.deleteProject(m.id); continue; }
+    const c = cloudMap.get(m.id);
+    // only projects newer here than in the cloud are read in full and sent
+    if (!c || (m.updated || 0) > (c.updated || 0)) { const p = await store.getProject(m.id); if (p) await pushProject(p).catch(() => {}); }
     if (!st.files) continue;
-    for (const key of fileKeys(p)) {
+    for (const key of m.keys || []) {
       if (await store.getFile(upMark(key))) continue;
       const blob = await store.getFile(key);
       if (blob) await uploadFile(key, blob).catch(() => {});

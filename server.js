@@ -48,7 +48,11 @@ app.use('/api', auth.requireLogin, usage.router);
 app.use('/api', auth.requireLogin, captions.router);
 app.use('/api', auth.requireLogin, footage.router);
 
-app.use(express.static(path.join(__dirname, 'public')));
+// The app's own code is always fetched fresh (it's small). Reading it from Chrome's disk cache can
+// fail when the computer is low on space ("ERR_CACHE_READ_FAILURE"), which left the page blank.
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, file) => { if (/\.(js|css|html)$/.test(file) && !/[\\/]vendor[\\/]/.test(file)) res.setHeader('Cache-Control', 'no-store'); },
+}));
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3000;

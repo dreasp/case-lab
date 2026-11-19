@@ -77,6 +77,9 @@ async function refreshStorage() {
     $('storageFill').style.width = Math.min(100, frac * 100).toFixed(1) + '%';
     $('storageFill').className = frac > 0.9 ? 'full' : frac > 0.7 ? 'warn' : '';
     $("storageText").textContent = `${mb(s.bytes)} of 10 GB free used`;
+    const extra = (s.leftoverBytes || 0) > 0 || (s.unfinished || 0) > 0;
+    $('storageClean').classList.toggle('hidden', !extra);
+    $('storageCleanNote').textContent = extra ? `${s.leftoverBytes ? mb(s.leftoverBytes) + ' left over from deleted cases or projects' : ''}${s.leftoverBytes && s.unfinished ? ', plus ' : ''}${s.unfinished ? s.unfinished + ' unfinished upload' + (s.unfinished === 1 ? '' : 's') : ''}.` : '';
   } catch (e) { /* not important */ }
 }
 
@@ -1218,13 +1221,28 @@ function wire() {
     } catch (e) { alert('Problem: ' + e.message); }
   });
 
+  $('storageClean').addEventListener('click', async () => {
+    const b = $('storageClean'); b.disabled = true; b.textContent = 'Cleaning up…';
+    try {
+      const r = await api('cloud/cleanup', {});
+      await refreshStorage();
+      alert(`Done: ${mb(r.freedBytes || 0)} freed (${r.removed || 0} leftover files${r.aborted ? `, ${r.aborted} unfinished uploads` : ''}).`);
+    } catch (e) { alert('Clean up failed: ' + e.message); }
+    b.disabled = false; b.textContent = 'Clean up';
+  });
   $('caseDelete').addEventListener('click', async () => {
     if (running) return alert('Wait for the analysis to finish or press Stop first.');
     if (!confirm(`Delete the case "${cur.title}"?\n\nIts transcripts, research and analysis copies are removed everywhere. Your original footage on your computer is NOT deleted.`)) return;
-    await store.deleteProject(cur.id);
+    const btn = $('caseDelete'); btn.disabled = true; btn.textContent = 'Deleting…';
+    const r = await store.deleteProject(cur.id);
+    btn.disabled = false; btn.textContent = 'Delete case';
     cur = null;
     await refreshCases();
-    refreshStorage();
+    await refreshStorage();
+    if (r.error) alert(`The case was deleted, but removing its files from cloud storage didn't finish (${r.error}). Click "Clean up" under Cloud storage to remove what's left.`);
+    else if (r.left) alert(`The case was deleted. ${r.left} of its files couldn't be removed from cloud storage yet: click "Clean up" under Cloud storage to try again.`);
+    else if (r.removed === 0) alert('Deleted. It had no files left in cloud storage.');
+    else if (r.removed != null) alert(`Deleted. ${mb(r.freedBytes || 0)} freed in cloud storage (${r.removed} files). Cloudflare's own dashboard can take a few hours to show the new total; the number under Cloud storage here is live.`);
     const list = await caseList();
     if (list.length) openCase(list[0].id); else showNew();
   });

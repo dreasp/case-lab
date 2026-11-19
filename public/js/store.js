@@ -6,11 +6,13 @@ let dbPromise = null;
 function db() {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 1);
+      const req = indexedDB.open(DB_NAME, 2);
       req.onupgradeneeded = () => {
         const d = req.result;
         if (!d.objectStoreNames.contains('projects')) d.createObjectStore('projects', { keyPath: 'id' });
         if (!d.objectStoreNames.contains('files')) d.createObjectStore('files');
+        // a short summary of each project, so lists don't have to read every whole project
+        if (!d.objectStoreNames.contains('meta')) d.createObjectStore('meta', { keyPath: 'id' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -70,13 +72,48 @@ async function linkTx(mode, fn) {
   }
 }
 
+// Files a project uses: the narration and anything uploaded with "Upload my own"
+// (footage cases: the recorded narration and your photos/videos in story scenes)
+export function fileKeys(p) {
+  const keys = new Set([p.id + ':audio']);
+  for (const s of p.shots || []) if (s.choice && s.choice.custom) keys.add(s.choice.custom);
+  if (p.kind === 'case') {
+    keys.add(`${p.id}:n:narration`);
+    for (const s of (p.story && p.story.segments) || []) for (const m of s.media || []) if (m.key) keys.add(m.key);
+  }
+  return [...keys];
+}
+const summary = p => ({ id: p.id, kind: p.kind || 'broll', title: p.title, updated: p.updated, duration: p.duration,
+  shotCount: (p.shots || []).length, fileCount: (p.files || []).length, keys: fileKeys(p) });
+
 export const store = {
-  saveProject: p => tx('projects', 'readwrite', s => s.put(JSON.parse(JSON.stringify(p)))),
+  saveProject: async p => {
+    const r = await tx('projects', 'readwrite', s => s.put(JSON.parse(JSON.stringify(p))));
+    await tx('meta', 'readwrite', s => s.put(summary(p)));
+    return r;
+  },
   getProject: id => tx('projects', 'readonly', s => s.get(id)),
-  listProjects: async () => ((await tx('projects', 'readonly', s => s.getAll())) || [])
-    .sort((a, b) => (b.updated || 0) - (a.updated || 0)),
+  // Summaries only (fast): { id, kind, title, updated, duration, shotCount, fileCount, keys }
+  listProjects: async () => {
+    let meta = (await tx('meta', 'readonly', s => s.getAll())) || [];
+    const ids = (await tx('projects', 'readonly', s => s.getAllKeys())) || [];
+    const have = new Set(meta.map(m => m.id));
+    // the first time (or after an older version): make the missing summaries once
+    for (const id of ids) {
+      if (have.has(id)) continue;
+      const p = await tx('projects', 'readonly', s => s.get(id));
+      if (!p) continue;
+      const m = summary(p);
+      await tx('meta', 'readwrite', s => s.put(m));
+      meta.push(m);
+    }
+    const alive = new Set(ids);
+    meta = meta.filter(m => alive.has(m.id));
+    return meta.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  },
   deleteProject: async id => {
     await tx('projects', 'readwrite', s => s.delete(id));
+    await tx('meta', 'readwrite', s => s.delete(id));
     const keys = (await tx('files', 'readonly', s => s.getAllKeys())) || [];
     for (const k of keys) if (String(k).startsWith(id + ':')) await tx('files', 'readwrite', s => s.delete(k));
   },

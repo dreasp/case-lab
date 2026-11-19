@@ -26,7 +26,15 @@ function db() {
       updated BIGINT NOT NULL DEFAULT 0,
       data JSONB NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS deleted_projects (id TEXT PRIMARY KEY, deleted BIGINT NOT NULL)`).catch(e => { ready = null; throw e; });
+    CREATE TABLE IF NOT EXISTS deleted_projects (id TEXT PRIMARY KEY, deleted BIGINT NOT NULL);
+    -- a short summary of each project, so the list loads without reading every whole project
+    ALTER TABLE projects ADD COLUMN IF NOT EXISTS kind TEXT;
+    ALTER TABLE projects ADD COLUMN IF NOT EXISTS duration DOUBLE PRECISION;
+    ALTER TABLE projects ADD COLUMN IF NOT EXISTS shots INTEGER;
+    ALTER TABLE projects ADD COLUMN IF NOT EXISTS files INTEGER;
+    UPDATE projects SET kind = COALESCE(data->>'kind', 'broll'), duration = (data->>'duration')::float,
+      shots = jsonb_array_length(COALESCE(data->'shots', '[]'::jsonb)), files = jsonb_array_length(COALESCE(data->'files', '[]'::jsonb))
+      WHERE kind IS NULL`).catch(e => { ready = null; throw e; });
   }
   return ready.then(() => pool);
 }
@@ -71,7 +79,8 @@ async function listAll(prefix) {
     for (const m of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
       const key = (m[1].match(/<Key>([^<]+)<\/Key>/) || [])[1];
       const size = Number((m[1].match(/<Size>(\d+)<\/Size>/) || [])[1] || 0);
-      if (key) out.push({ key: key.replace(/&amp;/g, '&'), size });
+      const at = Date.parse((m[1].match(/<LastModified>([^<]+)<\/LastModified>/) || [])[1] || '') || 0;
+      if (key) out.push({ key: key.replace(/&amp;/g, '&'), size, at });
     }
     const truncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
     token = truncated ? (xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/) || [])[1] : null;
@@ -79,13 +88,52 @@ async function listAll(prefix) {
   return out;
 }
 
+// Deletes stored files, several at a time. Returns how many were deleted; failures are tried again once.
 async function deleteObjects(keys) {
   const s = r2();
   if (!s) return 0;
+  const del = async k => {
+    for (let i = 0; i < 2; i++) {
+      try {
+        const r = await s.aws.fetch(`${s.base}/${k.split('/').map(encodeURIComponent).join('/')}`, { method: 'DELETE' });
+        if (r.ok || r.status === 404) return true;
+      } catch (e) { /* try again */ }
+    }
+    return false;
+  };
+  let n = 0, i = 0;
+  const worker = async () => { while (i < keys.length) { if (await del(keys[i++])) n++; } };
+  await Promise.all(Array.from({ length: Math.min(12, keys.length) }, worker));
+  return n;
+}
+
+// Uploads that were started but never finished (they still take up space)
+async function listUnfinished(prefix) {
+  const s = r2();
+  if (!s) return [];
+  const out = [];
+  const q = new URLSearchParams({ uploads: '' });
+  if (prefix) q.set('prefix', prefix);
+  let r, xml;
+  try {
+    r = await s.aws.fetch(`${s.base}?${q.toString().replace('uploads=', 'uploads')}`, { signal: AbortSignal.timeout(15000) });
+    xml = await r.text();
+  } catch (e) { return out; } // not essential: never hold up the rest
+  if (!r.ok) return out;
+  for (const m of xml.matchAll(/<Upload>([\s\S]*?)<\/Upload>/g)) {
+    const key = (m[1].match(/<Key>([^<]+)<\/Key>/) || [])[1];
+    const id = (m[1].match(/<UploadId>([^<]+)<\/UploadId>/) || [])[1];
+    const at = Date.parse((m[1].match(/<Initiated>([^<]+)<\/Initiated>/) || [])[1] || '') || 0;
+    if (key && id) out.push({ key: key.replace(/&amp;/g, '&'), id, at });
+  }
+  return out;
+}
+async function abortUnfinished(list) {
+  const s = r2();
   let n = 0;
-  for (const k of keys) {
-    const r = await s.aws.fetch(`${s.base}/${k.split('/').map(encodeURIComponent).join('/')}`, { method: 'DELETE' });
-    if (r.ok || r.status === 404) n++;
+  for (const u of list) {
+    const r = await s.aws.fetch(`${s.base}/${u.key.split('/').map(encodeURIComponent).join('/')}?uploadId=${encodeURIComponent(u.id)}`, { method: 'DELETE' }).catch(() => null);
+    if (r && (r.ok || r.status === 404)) n++;
   }
   return n;
 }
@@ -98,11 +146,7 @@ router.get('/cloud/projects', async (req, res) => {
   try {
     const p = await db();
     if (!p) return res.json({ projects: [] });
-    const { rows } = await p.query(`SELECT id, title, updated, data->>'kind' AS kind,
-      (data->>'duration')::float AS duration,
-      jsonb_array_length(COALESCE(data->'shots', '[]'::jsonb)) AS shots,
-      jsonb_array_length(COALESCE(data->'files', '[]'::jsonb)) AS files
-      FROM projects ORDER BY updated DESC`);
+    const { rows } = await p.query('SELECT id, title, updated, kind, duration, shots, files FROM projects ORDER BY updated DESC');
     const del = await p.query('SELECT id FROM deleted_projects');
     res.json({ projects: rows.map(r => ({ ...r, updated: Number(r.updated) })), deleted: del.rows.map(r => r.id) });
   } catch (e) { res.status(500).json({ error: 'Database: ' + e.message }); }
@@ -128,10 +172,12 @@ router.put('/cloud/projects/:id', async (req, res) => {
     const gone = await p.query('SELECT 1 FROM deleted_projects WHERE id = $1', [project.id]);
     if (gone.rows.length) return res.json({ ok: false, deleted: true });
     // Never let an older copy overwrite a newer one
-    const { rows } = await p.query(`INSERT INTO projects (id, title, updated, data) VALUES ($1, $2, $3, $4)
-      ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, updated = EXCLUDED.updated, data = EXCLUDED.data
+    const { rows } = await p.query(`INSERT INTO projects (id, title, updated, data, kind, duration, shots, files) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, updated = EXCLUDED.updated, data = EXCLUDED.data,
+        kind = EXCLUDED.kind, duration = EXCLUDED.duration, shots = EXCLUDED.shots, files = EXCLUDED.files
       WHERE projects.updated <= EXCLUDED.updated
-      RETURNING updated`, [project.id, String(project.title || ''), Number(project.updated) || Date.now(), project]);
+      RETURNING updated`, [project.id, String(project.title || ''), Number(project.updated) || Date.now(), project,
+      project.kind || 'broll', Number(project.duration) || null, (project.shots || []).length, (project.files || []).length]);
     res.json({ ok: true, stale: !rows.length });
   } catch (e) { res.status(500).json({ error: 'Database: ' + e.message }); }
 });
@@ -145,9 +191,16 @@ router.delete('/cloud/projects/:id', async (req, res) => {
       await p.query('DELETE FROM projects WHERE id = $1', [id]);
       await p.query('INSERT INTO deleted_projects (id, deleted) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING', [id, Date.now()]);
     }
-    // Remove every file stored under this project
-    if (r2()) await deleteObjects((await listAll(id + '/')).map(o => o.key));
-    res.json({ ok: true });
+    // Remove every file stored under this project (and uploads that never finished)
+    let removed = 0, freed = 0, left = 0;
+    if (r2()) {
+      const objs = await listAll(id + '/');
+      removed = await deleteObjects(objs.map(o => o.key));
+      freed = objs.reduce((n, o) => n + o.size, 0);
+      await abortUnfinished(await listUnfinished(id + '/'));
+      left = (await listAll(id + '/')).length;
+    }
+    res.json({ ok: !left, removed, freedBytes: freed, left });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -231,7 +284,44 @@ router.get('/cloud/storage', async (req, res) => {
     const all = await listAll('');
     const byProject = {};
     for (const o of all) { const id = o.key.split('/')[0]; byProject[id] = (byProject[id] || 0) + o.size; }
-    res.json({ ready: true, bytes: all.reduce((n, o) => n + o.size, 0), freeBytes: 10 * 1024 ** 3, byProject });
+    // files left behind by deleted projects, and uploads that never finished
+    const leftover = (await leftovers(all)).reduce((n, o) => n + o.size, 0);
+    const unfinished = (await listUnfinished('')).filter(u => Date.now() - u.at > 24 * 3600 * 1000).length;
+    res.json({ ready: true, bytes: all.reduce((n, o) => n + o.size, 0), freeBytes: 10 * 1024 ** 3, byProject, leftoverBytes: leftover, unfinished });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+async function liveIds() {
+  const p = await db();
+  if (!p) return null;
+  const { rows } = await p.query('SELECT id FROM projects');
+  return new Set(rows.map(r => r.id));
+}
+// Files of projects that no longer exist. A project not saved to the database yet (just created)
+// is left alone: only files older than 2 days, or of projects you deleted, count.
+async function leftovers(all) {
+  const live = await liveIds();
+  if (!live) return [];
+  const p = await db();
+  const gone = new Set((await p.query('SELECT id FROM deleted_projects')).rows.map(r => r.id));
+  const newest = {};
+  for (const o of all) { const id = o.key.split('/')[0]; newest[id] = Math.max(newest[id] || 0, o.at || 0); }
+  return all.filter(o => {
+    const id = o.key.split('/')[0];
+    if (id === 'pglobal' || live.has(id)) return false;
+    return gone.has(id) || Date.now() - newest[id] > 2 * 24 * 3600 * 1000;
+  });
+}
+
+// Deletes files left behind by deleted projects and uploads that never finished
+router.post('/cloud/cleanup', async (req, res) => {
+  try {
+    if (!r2()) return res.json({ ok: true, removed: 0, freedBytes: 0 });
+    if (!(await db())) return res.status(400).json({ error: 'Cloud saving is not set up.' });
+    const objs = await leftovers(await listAll(''));
+    const removed = await deleteObjects(objs.map(o => o.key));
+    const aborted = await abortUnfinished((await listUnfinished('')).filter(u => Date.now() - u.at > 24 * 3600 * 1000));
+    res.json({ ok: true, removed, freedBytes: objs.reduce((n, o) => n + o.size, 0), aborted });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

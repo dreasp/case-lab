@@ -9,6 +9,7 @@ const fmt = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = Ma
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 let project = null;
+let brollOpened = false; // the B-roll project is opened the first time B-roll builder is shown
 let audioBlob = null;
 let selectedShot = 0;
 let cancelFlag = false;
@@ -60,7 +61,14 @@ async function start() {
   // Copy anything saved only in this browser up to the cloud
   syncAll().then(refreshProjects).catch(() => {});
   refreshUsage();
-  try { if (localStorage.getItem('caselab-mode') === 'footage') showMode('footage'); } catch (e) { /* ignore */ }
+  let footage = false;
+  try { footage = localStorage.getItem('caselab-mode') === 'footage'; } catch (e) { /* ignore */ }
+  if (footage) { showMode('footage'); return; } // the B-roll project opens when you switch to it
+  await openLatestBroll();
+}
+
+async function openLatestBroll() {
+  brollOpened = true;
   const list = (await store.listProjects()).filter(p => p.kind !== 'case');
   if (list.length) await openProject(list[0].id); else showImport();
 }
@@ -71,6 +79,7 @@ function showMode(mode) {
   $('mode-broll').classList.toggle('hidden', mode !== 'broll');
   $('mode-footage').classList.toggle('hidden', mode !== 'footage');
   try { localStorage.setItem('caselab-mode', mode); } catch (e) { /* not important */ }
+  if (mode === 'broll' && !brollOpened && !project) openLatestBroll().catch(e => console.error(e));
   if (mode === 'footage') { renderer.stop(); import('./footage.js').then(m => m.openFootage()).catch(e => console.error(e)); }
 }
 document.querySelectorAll('.mode').forEach(b => b.addEventListener('click', () => showMode(b.dataset.mode)));
