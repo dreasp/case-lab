@@ -661,8 +661,13 @@ async function exportVideo() {
 let PV = null;
 const PLAYABLE_AUDIO = /\.(mp3|wav|m4a|aac|ogg)$/i;
 
-async function previewMedia(f) {
+// What the preview plays for a file: the original if it's linked and plays in Chrome, otherwise
+// the analysis copies in the cloud. When those were removed ("Free cloud space"), the part a..b
+// of the linked original is converted for the preview (offset = where that part starts).
+async function previewMedia(f, a = null, b = null) {
   if (PV.media.has(f.id)) return PV.media.get(f.id);
+  const rk = f.id + ':' + a + ':' + b;
+  if (PV.media.has(rk)) return PV.media.get(rk);
   let m = null;
   const local = async () => {
     const file = await X.getLocalFile(f);
@@ -671,10 +676,32 @@ async function previewMedia(f) {
   };
   if (f.type === 'video' && direct(f)) { try { m = { video: await local(), audio: null, note: '' }; } catch (e) { /* copies below */ } }
   if (!m && f.type === 'audio' && PLAYABLE_AUDIO.test(f.name)) { try { m = { video: null, audio: await local(), note: '' }; } catch (e) { /* below */ } }
-  if (!m) {
-    const [v, a] = await X.signedUrls([f.type === 'video' ? f.proxyKey : null, f.audioKey]);
-    m = { video: f.type === 'video' ? v : null, audio: a || null, note: f.type === 'video' ? 'This part shows the analysis copy (1 frame a second) with the real sound. The exported video uses your original footage.' : '' };
+  if (!m && (f.type === 'video' ? f.proxyKey : f.audioKey)) {
+    const [v, au] = await X.signedUrls([f.type === 'video' ? f.proxyKey : null, f.audioKey]);
+    if (v || au) m = { video: f.type === 'video' ? v : null, audio: au || null, note: f.type === 'video' ? 'This part shows the analysis copy (1 frame a second) with the real sound. The exported video uses your original footage.' : '' };
   }
+  if (!m && a != null) {
+    // no copies in the cloud: convert just this part of the original, if it's linked here
+    const file = await X.getLocalFile(f).catch(() => null);
+    if (file) {
+      const start = Math.max(0, a - 1), len = Math.min(240, (b || a + 30) - start + 1);
+      $('fpNote').textContent = `Preparing this part of "${label(f)}" for the preview… (its analysis copy was removed from the cloud)`;
+      PV.preparing = true; // the clock waits meanwhile
+      try {
+        const { convertRange } = await import('./convert.js');
+        const blob = await convertRange(file, start, len, { video: f.type === 'video', onProgress: p => { if (PV) $('fpNote').textContent = `Preparing this part of "${label(f)}" for the preview… ${Math.round(p * 100)}%`; } });
+        const u = URL.createObjectURL(blob); PV.urls.push(u);
+        m = f.type === 'video' ? { video: u, audio: null, offset: start, note: '' } : { video: null, audio: u, offset: start, note: '' };
+        PV.media.set(rk, m);
+        return m;
+      } catch (e) { m = { video: null, audio: null, note: `This part could not be prepared: ${e.message}` }; PV.media.set(rk, m); return m; }
+      finally { if (PV) PV.preparing = false; }
+    }
+    m = { video: null, audio: null, missing: true, note: `"${label(f)}" can't be shown: its analysis copy was removed from the cloud ("Free cloud space") and the original isn't linked on this computer. Link it on the Files tab (Choose case folder, or Find it), then open the preview again.` };
+    PV.media.set(rk, m);
+    return m;
+  }
+  if (!m) m = { video: null, audio: null, missing: true, note: `"${label(f)}" can't be shown here: link the original on the Files tab.` };
   PV.media.set(f.id, m);
   return m;
 }
@@ -729,7 +756,7 @@ function drawPicture(x, W, H, withBlur) {
     CaseDraw.drawMedia(x, V, W, H, fr, 1, true);
     const sg = PV.plan.segs[PV.i];
     const faces = withBlur && sg && sg.pic && sg.pic.file ? PV.faces.get(sg.pic.file.id) : null;
-    if (faces) CaseDraw.blurBoxes(x, CaseDraw.mediaRect(V, W, H, fr, 1, true), CaseDraw.faceBoxesAt(faces, V.currentTime));
+    if (faces) CaseDraw.blurBoxes(x, CaseDraw.mediaRect(V, W, H, fr, 1, true), CaseDraw.faceBoxesAt(faces, V.currentTime + (PV.vidOffset || 0)));
     return true;
   }
   if (!IMG.classList.contains('hidden') && IMG.naturalWidth) { CaseDraw.drawMedia(x, IMG, W, H, { mode: 'auto' }, 1, false); return true; }
@@ -808,15 +835,18 @@ async function loadSeg(i, into) {
       if (su) { A.src = su; A.dataset.src = su; A.volume = 1; PV.audFrom = sg.sound[0].from - (sg.t0 - sg.t0); }
     }
   } else if (pic && pic.file) {
-    const md = await previewMedia(pic.file);
+    const md = await previewMedia(pic.file, pic.from, pic.from + (pic.freeze ? 1 : sg.dur));
     if (token !== PV.token) return;
     $('fpNote').textContent = md.note;
     if (md.video) { if (V.dataset.src !== md.video) { V.src = md.video; V.dataset.src = md.video; } }
     PV.freeze = !!pic.freeze;
     V.muted = PV.freeze || !!md.audio;
     V.volume = Math.min(1, gain);
-    PV.vidFrom = pic.from;
-    if (md.audio && !PV.freeze && sg.sound.length) { A.src = md.audio; A.dataset.src = md.audio; A.volume = Math.min(1, gain); PV.audFrom = sg.sound[0].from; }
+    PV.vidOffset = md.offset || 0;
+    // nothing to show: let the clock run on its own instead of waiting for it
+    PV.vidFrom = md.video ? pic.from - PV.vidOffset : null;
+    if (!md.video) V.classList.add('hidden');
+    if (md.audio && !PV.freeze && sg.sound.length) { A.src = md.audio; A.dataset.src = md.audio; A.volume = Math.min(1, gain); PV.audFrom = sg.sound[0].from - (md.offset || 0); }
   } else if (pic && pic.card) {
     V.classList.add('hidden');
     CARD.textContent = `${pic.card}\n${pic.sub || ''}`; CARD.classList.remove('hidden');
@@ -844,6 +874,7 @@ function playNow(into) {
 // The preview follows the sound you hear: the clock is taken from whichever recording is
 // playing, and holds while it is still loading, so captions never run ahead of the speech.
 function syncClock() {
+  if (PV.preparing) { PV.wall = performance.now(); return; }
   const sg = PV.plan.segs[PV.i];
   if (!sg || !PV.playing) return;
   const A = $('fpAudio'), V = $('fpVideo'), N = $('fpNarr');
