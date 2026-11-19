@@ -863,7 +863,14 @@ function syncClock() {
     if (el === N && !PV.narrStarted) return; // narration starts after a short pause
     PV.wall = now; // hold the clock until the sound is really playing
     if (!PV.waitSince) PV.waitSince = now;
-    if (now - PV.waitSince > 10000 && !PV.loadNoted) { PV.loadNoted = true; $('fpNote').textContent = 'Still loading this part from the cloud… If it never starts, Chrome may be out of space on this computer, or the connection is slow.'; }
+    if (now - PV.waitSince > 10000 && !PV.loadNoted) {
+      PV.loadNoted = true;
+      // what each player is doing, so the problem can be found
+      const st = (name, x) => x.getAttribute('src') ? `${name}: ${String(x.currentSrc || x.src).startsWith('blob:') ? 'your file' : 'cloud copy'}, ready ${x.readyState}/4, network ${x.networkState}${x.error ? ', error ' + x.error.code + ' ' + (x.error.message || '') : ''}${x.paused ? ', paused' : ''}${x.hasAttribute('crossorigin') ? '' : ', plain'}` : '';
+      const info = [st('picture', V), st('sound', A)].filter(Boolean).join(' · ');
+      console.warn('Preview waiting:', info);
+      $('fpNote').textContent = `Still loading this part… (${info})`;
+    }
     return;
   }
   PV.waitSince = 0;

@@ -33,9 +33,18 @@ export function evenVolume(el) {
   el.addEventListener('error', () => {
     if (st.node || !el.hasAttribute('crossorigin') || String(el.currentSrc || el.src).startsWith('blob:')) return;
     const src = el.src;
+    if (!src) return;
+    // load it again the normal way, at the same spot, and keep playing if it was meant to
+    const at = el.currentTime, wanted = st.wantPlay;
+    console.warn('Volume levelling is off for this recording (the cloud did not allow it); loading it normally.');
     el.removeAttribute('crossorigin');
-    if (src) { el.src = src; el.load(); }
+    el.addEventListener('loadedmetadata', () => { try { el.currentTime = at; } catch (e) { /* ignore */ } if (wanted) el.play().catch(() => {}); }, { once: true });
+    el.src = src; el.load();
   });
+  // remembers whether the app wants this recording playing (for the reload above)
+  const play0 = el.play.bind(el), pause0 = el.pause.bind(el);
+  el.play = () => { st.wantPlay = true; return play0(); };
+  el.pause = () => { st.wantPlay = false; return pause0(); };
   el.addEventListener('loadstart', () => {
     st.key = keyOf(el.currentSrc || el.src);
     st.level = known.get(st.key) || null;

@@ -33,7 +33,7 @@ async function tx(store, mode, fn) {
       t.onabort = () => reject(t.error);
     });
   } catch (e) {
-    console.warn('Storage problem:', e);
+    console.warn('Storage problem:', e, '(', store, mode, ')');
     lastError = e;
     // Chrome has no room left for this site: tell the app once, so it can explain what to do
     if (e && e.name === 'QuotaExceededError' && !fullWarned) { fullWarned = true; try { window.dispatchEvent(new Event('caselab-storage-full')); } catch (x) { /* not in a page */ } }
