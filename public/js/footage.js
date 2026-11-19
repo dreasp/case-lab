@@ -111,6 +111,8 @@ function shortView(c, sh) {
       if ((sh.startMedia || []).length) segs.push({ id: sh.id + 's', type: 'media', media: sh.startMedia });
       if (intro) segs.push({ id: sh.id + 'n', type: 'narration', text: intro });
       segs.push(...sh.clips);
+      const outro = (sh.outro || '').trim();
+      if (outro) segs.push({ id: sh.id + 'o', type: 'narration', text: outro });
       if ((sh.endMedia || []).length) segs.push({ id: sh.id + 'e', type: 'media', media: sh.endMedia });
       return segs;
     },

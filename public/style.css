@@ -509,3 +509,4 @@ input[type=range] { padding: 0; accent-color: var(--gold); }
 .fp-stage.tall{aspect-ratio:9/16;height:min(70vh,760px);width:auto;margin-left:auto;margin-right:auto}
 .short-media{margin:8px 0}
 .short-lines{flex-basis:100%;margin-top:6px}
+.short-rec{margin:-2px 0 8px}

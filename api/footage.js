@@ -463,7 +463,7 @@ router.post('/case/short-intros', async (req, res) => {
     const list = (shorts || []).slice(0, 12);
     const prompt = `${STYLE}
 
-You write the spoken intro for vertical YouTube Shorts / TikToks / Reels cut from real police footage of a true crime case. The creator records the intro in her own voice; the footage clip plays right after it.
+You write the spoken narration for vertical YouTube Shorts / TikToks / Reels cut from real police footage of a true crime case. Each Short is: the creator's intro (her own voice), then the footage clip, then her ending.
 
 CASE: ${title || ''}
 CASE CONTEXT (written by the creator, trust it):
@@ -475,15 +475,17 @@ What the clip shows: ${x.description || ''}
 What is said in the clip:
 ${String(x.transcript || '').slice(0, 2500)}`).join('\n\n')}
 
-For each Short write an intro of 2 or 3 sentences, about 8 to 15 seconds read aloud (25 to 40 words), that tells a new viewer who knows nothing about the case what they are about to watch: who, where and when (month and year), and why this moment matters. The first sentence must hook the viewer.
-- Victim-centered, factual, serious. Say "police say" or "alleged" where something is not proven. Never sensational or gory.
-- Don't give away the outcome of the case (verdict, sentence), and don't retell what the clip itself shows.
+For each Short write:
+1. "intro": 2 or 3 sentences, about 8 to 15 seconds read aloud (25 to 40 words), that tell a new viewer who knows nothing about the case what they are about to watch: who, where and when (month and year), and why this moment matters. The first sentence must hook the viewer. Don't retell what the clip shows.
+2. "outro": 2 to 4 sentences, about 10 to 18 seconds read aloud (30 to 50 words), spoken right after the clip. Give a short synopsis of what this moment meant and what happened next in the case (for example what investigators found, the arrest or the charges), so the Short feels complete instead of ending abruptly. Don't reveal the final verdict or sentence. End with one short line inviting viewers to watch the full story on the channel, for example "The full case is on my channel."
+- Victim-centered, factual, serious. Say "police say" or "alleged" where something is not proven; only state what the case context supports. Never sensational or gory.
 - Full, flowing sentences written to be read aloud. Never use em dashes.
 
-Return JSON: { "intros": [ { "id": the short's id, "text": the intro } ] }`;
+Return JSON: { "intros": [ { "id": the short's id, "intro": the intro, "outro": the ending } ] }`;
     const out = await generateJSON([{ text: prompt }], { temperature: 0.6 });
     const intros = {};
-    for (const x of (out && out.intros) || []) if (x && x.id && x.text) intros[String(x.id)] = String(x.text).replace(/\s*[—–]\s*/g, ', ').trim();
+    const clean = t => String(t || '').replace(/\s*[—–]\s*/g, ', ').trim();
+    for (const x of (out && out.intros) || []) if (x && x.id && (x.intro || x.text || x.outro)) intros[String(x.id)] = { intro: clean(x.intro || x.text), outro: clean(x.outro) };
     res.json({ intros });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

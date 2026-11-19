@@ -19,7 +19,8 @@ const KIND = { reveal: 3, emotional: 2.5, action: 2, dialogue: 1.5, context: 0 }
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const shorts = c => (c.shorts = c.shorts || []);
 const mediaLen = list => (list || []).reduce((d, it) => d + (it.kind === 'video' ? (it.len || 5) : 3.5), 0);
-const lengthOf = sh => sh.clips.reduce((n, k) => n + Math.max(0, k.end - k.start), 0) + ((sh.intro || '').trim() ? (sh.intro.trim().split(/\s+/).length / 2.6 + 0.8) : 0)
+const spoken = t => ((t || '').trim() ? t.trim().split(/\s+/).length / 2.6 + 0.8 : 0);
+const lengthOf = sh => sh.clips.reduce((n, k) => n + Math.max(0, k.end - k.start), 0) + spoken(sh.intro) + spoken(sh.outro)
   + mediaLen(sh.startMedia) + mediaLen(sh.endMedia);
 const editLines = new Set();
 
@@ -102,8 +103,10 @@ export function renderShorts() {
       <div class="short-fields">
         <label class="small-text">On-screen hook (first 4 seconds, top of the screen)<input data-sf="hook" value="${X.esc(sh.hook || '')}" placeholder="A short line that makes people stay"></label>
         <label class="small-text">Your intro to record (plays first, over the footage with its sound off)<textarea data-sf="intro" rows="3" placeholder="${X.esc(sh.introDraft ? 'Idea: ' + sh.introDraft : 'Leave empty for footage only')}">${X.esc(sh.intro || '')}</textarea>
-          <span class="muted">${(sh.intro || '').trim() ? 'Record it, then upload it in "Preview and export".' : ''}</span></label>
+        </label>
+        <label class="small-text">Your ending to record (plays after the clip, over the footage that follows with its sound off)<textarea data-sf="outro" rows="3" placeholder="What happened next, in 2 or 3 sentences">${X.esc(sh.outro || '')}</textarea></label>
       </div>
+      ${(sh.intro || '').trim() || (sh.outro || '').trim() ? `<div class="short-rec small-text muted">Record the intro and the ending in one go (one audio file, with a short pause between them), then upload it in "Preview and export": the app finds where each part is. <button class="btn ghost small" data-sa="copy" type="button">Copy both to record</button></div>` : ''}
       <details class="seg-vis short-media" ${(sh.startMedia || []).length ? 'open' : ''}><summary>Photos or videos at the start${(sh.startMedia || []).length ? ` (${sh.startMedia.length})` : ''}</summary>
         ${stripHtml(sh.startMedia || [], sh.id + '|startMedia', casePhotos, 'Shown first, before your intro. Photos 3.5 seconds each; videos play with their sound.', 0)}
       </details>
@@ -144,10 +147,10 @@ function clipText(f, a, b) {
 async function writeIntros() {
   const c = X.cur();
   const list = shorts(c);
-  const todo = list.filter(sh => !(sh.intro || '').trim());
+  const todo = list.filter(sh => !(sh.intro || '').trim() || !(sh.outro || '').trim());
   const which = todo.length ? todo : list;
-  if (!todo.length && !confirm('Every Short already has an intro. Write new ones for all of them? (Your current intros are replaced.)')) return;
-  const b = $('shortsIntros'); b.disabled = true; b.textContent = 'Writing intros…';
+  if (!todo.length && !confirm('Every Short already has an intro and an ending. Write new ones for all of them? (Your current ones are replaced.)')) return;
+  const b = $('shortsIntros'); b.disabled = true; b.textContent = 'Writing the narration…';
   try {
     const body = {
       title: c.title, context: X.contextText(c),
@@ -155,13 +158,21 @@ async function writeIntros() {
     };
     const r = await X.api('case/short-intros', body);
     let n = 0;
-    for (const sh of which) if (r.intros && r.intros[sh.id]) { sh.intro = r.intros[sh.id]; sh.edited = true; n++; }
+    for (const sh of which) {
+      const x = r.intros && r.intros[sh.id];
+      if (!x) continue;
+      // fills what's empty (or everything, when rewriting all)
+      const all = !todo.length;
+      if (x.intro && (all || !(sh.intro || '').trim())) sh.intro = x.intro;
+      if (x.outro && (all || !(sh.outro || '').trim())) sh.outro = x.outro;
+      sh.edited = true; n++;
+    }
     await X.save();
     renderShorts();
     if (X.refreshUsage) X.refreshUsage();
-    if (!n) alert('No intros came back. Try again in a moment.');
-  } catch (e) { alert('Writing the intros failed: ' + e.message); }
-  finally { b.disabled = false; b.textContent = 'Write intro scripts'; }
+    if (!n) alert('Nothing came back. Try again in a moment.');
+  } catch (e) { alert('Writing the narration failed: ' + e.message); }
+  finally { b.disabled = false; b.textContent = 'Write narration scripts'; }
 }
 
 const parseTime = v => { const p = String(v).trim().split(':').map(Number); return p.some(isNaN) ? null : p.reduce((a, b) => a * 60 + b, 0); };
@@ -262,7 +273,7 @@ function wire() {
     if (!sh || !f) return;
     sh[f] = e.target.value; sh.edited = true;
     clearTimeout(list._t); list._t = setTimeout(() => X.save(), 600);
-    if (f === 'intro') { const b = e.target.closest('.short-card').querySelector('.short-len'); const len = lengthOf(sh); b.textContent = X.fmtH(len); }
+    if (f === 'intro' || f === 'outro') { const b = e.target.closest('.short-card').querySelector('.short-len'); const len = lengthOf(sh); b.textContent = X.fmtH(len); }
   });
   list.addEventListener('change', async e => {
     const { sh, k } = at(e);
@@ -283,6 +294,11 @@ function wire() {
     if (!sh) return;
     const act = b.dataset.sa;
     if (act === 'open') return X.openShort(sh);
+    if (act === 'copy') {
+      const text = [sh.intro, sh.outro].map(x => (x || '').trim()).filter(Boolean).join('\n\n');
+      try { await navigator.clipboard.writeText(text); b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy both to record'; }, 1500); } catch (e) { alert(text); }
+      return;
+    }
     if (act === 'delete') {
       if (!confirm(`Delete "${sh.title}"?`)) return;
       c.shorts = shorts(c).filter(x => x !== sh);
