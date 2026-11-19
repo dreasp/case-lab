@@ -35,10 +35,12 @@ async function tx(store, mode, fn) {
   } catch (e) {
     console.warn('Storage problem:', e);
     lastError = e;
+    // Chrome has no room left for this site: tell the app once, so it can explain what to do
+    if (e && e.name === 'QuotaExceededError' && !fullWarned) { fullWarned = true; try { window.dispatchEvent(new Event('caselab-storage-full')); } catch (x) { /* not in a page */ } }
     return undefined;
   }
 }
-let lastError = null;
+let lastError = null, fullWarned = false;
 
 // Links to your folders and files live in their own small database, so a problem with the big
 // one (full, or damaged) doesn't lose them
@@ -119,6 +121,8 @@ export const store = {
     for (const k of keys) if (String(k).startsWith(id + ':')) await tx('files', 'readwrite', s => s.delete(k));
   },
   putFile: (key, blob) => tx('files', 'readwrite', s => s.put(blob, key)),
+  fileKeysAll: () => tx('files', 'readonly', s => s.getAllKeys()),
+  deleteFile: key => tx('files', 'readwrite', s => s.delete(key)),
   getFile: key => tx('files', 'readonly', s => s.get(key)),
   putLink: (key, h) => linkTx('readwrite', s => s.put(h, key)),
   getLink: key => linkTx('readonly', s => s.get(key)),

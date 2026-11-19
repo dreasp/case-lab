@@ -139,6 +139,20 @@ export const cloudStore = {
     if ((await cloudStatus()).files) uploadFile(key, blob).catch(() => {});
   },
 
+  // Frees space on this computer: removes the copies kept in Chrome of files that are safely in
+  // the cloud (they download again when needed). Returns how many were removed.
+  async freeLocal() {
+    const keys = (await store.fileKeysAll()) || [];
+    const all = new Set(keys.map(String));
+    let n = 0;
+    for (const k of all) {
+      if (k.endsWith('#cloud') || !all.has(upMark(k))) continue;
+      await store.deleteFile(k);
+      n++;
+    }
+    return n;
+  },
+
   // Local copy first; otherwise download from the cloud and keep a local copy
   async getFile(key) {
     const local = await store.getFile(key);

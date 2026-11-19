@@ -827,7 +827,7 @@ async function loadSeg(i, into) {
   }
   const waitMeta = el => el.readyState >= 1 ? null : new Promise(r => { el.addEventListener('loadedmetadata', r, { once: true }); setTimeout(r, 4000); });
   await Promise.all([PV.vidFrom != null ? waitMeta(V) : null, PV.audFrom != null ? waitMeta(A) : null]);
-  if (token !== PV.token) return;
+  if (!PV || token !== PV.token) return; // the preview was closed meanwhile
   if (PV.vidFrom != null) V.currentTime = Math.max(0, PV.freeze ? PV.vidFrom : PV.vidFrom + into);
   if (PV.audFrom != null) A.currentTime = Math.max(0, PV.audFrom + into);
   if (sg.narr) N.currentTime = sg.narr.a0 + Math.max(0, into - sg.narr.lead);
@@ -855,11 +855,19 @@ function syncClock() {
   else if (sg.narr && into >= sg.narr.lead && into < sg.narr.lead + sg.narr.len) { el = N; from = sg.narr.a0 - sg.narr.lead; }
   if (!el) return; // photos only, or a still frame: the plain clock is fine
   if (el.ended) return; // the recording ran out before the scene did: keep going on the plain clock
+  if (el.error) { // this recording couldn't be loaded: say so, and carry on without it
+    if (!PV.loadNoted) { PV.loadNoted = true; $('fpNote').textContent = `The ${el === V ? 'footage' : el === N ? 'narration' : 'sound'} for this part could not be loaded (${el.error.message || 'error ' + el.error.code}). ${PV.full ? 'Chrome is out of space on this computer: see the message about storage.' : 'Check your internet connection and try again.'}`; }
+    return;
+  }
   if (el.paused || el.readyState < 3 || el.seeking) {
     if (el === N && !PV.narrStarted) return; // narration starts after a short pause
     PV.wall = now; // hold the clock until the sound is really playing
+    if (!PV.waitSince) PV.waitSince = now;
+    if (now - PV.waitSince > 10000 && !PV.loadNoted) { PV.loadNoted = true; $('fpNote').textContent = 'Still loading this part from the cloud… If it never starts, Chrome may be out of space on this computer, or the connection is slow.'; }
     return;
   }
+  PV.waitSince = 0;
+  if (PV.loadNoted) { PV.loadNoted = false; }
   const t = sg.t0 + (el.currentTime - from);
   if (isFinite(t) && t >= sg.t0 - 0.5) { PV.base = t; PV.wall = now; }
 }
