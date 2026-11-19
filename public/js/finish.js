@@ -42,6 +42,13 @@ export function initFinish(helpers) {
     }
   });
   $('finDuck').addEventListener('input', () => { $('finDuckVal').textContent = $('finDuck').value + '%'; });
+  $('finFrame').addEventListener('change', async () => {
+    const c = X.cur();
+    if (!c || !c.isShort) return;
+    c.frame = { mode: $('finFrame').value === 'fill' ? 'fill' : 'big' };
+    await X.save();
+  });
+  $('finShortBack').addEventListener('click', () => { if (X.leaveShort) X.leaveShort(); });
   ['finAspect', 'finCaps', 'finDuck', 'finMute', 'finMuteHow'].forEach(id => $(id).addEventListener('change', async () => {
     const n = narr(); n.opts = { aspect: $('finAspect').value, caps: $('finCaps').value, duck: +$('finDuck').value, mute: $('finMute').checked, muteHow: $('finMuteHow').value };
     await X.save();
@@ -59,7 +66,10 @@ export function initFinish(helpers) {
 }
 
 const narr = () => { const c = X.cur(); if (!c.narr) c.narr = {}; return c.narr; };
-const narrKey = c => `${c.id}:n:narration`;
+// (a Short keeps its own recording under its own key)
+const narrKey = c => c.narrKey || `${c.id}:n:narration`;
+// Forget cached audio when switching between the long video and a Short
+export function resetFinish() { narrUrl = null; }
 const storySegs = c => (c.story && c.story.segments) || [];
 const narrParts = c => storySegs(c).filter(s => s.type === 'narration' && (s.text || '').trim());
 
@@ -123,7 +133,8 @@ let alignMemo = { key: null, words: null };
 function matchParts(c) {
   const n = c.narr || {};
   const parts = narrParts(c);
-  if (!n.words || !n.words.length || !parts.length) return null;
+  if (!parts.length) return []; // footage only (a Short without an intro): nothing to match
+  if (!n.words || !n.words.length) return null;
   const key = n.words.length + '|' + (n.at || 0) + '|' + parts.map(p => p.text).join('\u0001');
   if (alignMemo.key !== key) alignMemo = { key, words: alignWords(parts.map(p => p.text), n.words) };
   const words = alignMemo.words;
@@ -192,7 +203,14 @@ export function renderFinish() {
     return;
   }
   const m = matchParts(c);
-  $('narrInfo').textContent = n.name ? `${n.name} · ${X.fmtH(n.duration || 0)}${n.words ? '' : ' · not matched yet'}` : `No narration uploaded yet. Your story has ${parts.length} narration parts.`;
+  $('finShortBar').classList.toggle('hidden', !c.isShort);
+  if (c.isShort) $('finShortTitle').textContent = c.title;
+  $('finAspect').disabled = !!c.isShort;
+  if (c.isShort) $('finAspect').value = '9:16';
+  $('finFrameRow').classList.toggle('hidden', !c.isShort);
+  if (c.isShort) $('finFrame').value = (c.frame && c.frame.mode === 'fill') ? 'fill' : 'big';
+  if (!parts.length) $('narrInfo').textContent = 'No intro to record: this Short is footage only. You can preview and export it straight away.';
+  else $('narrInfo').textContent = n.name ? `${n.name} · ${X.fmtH(n.duration || 0)}${n.words ? '' : ' · not matched yet'}` : `No narration uploaded yet. Your story has ${parts.length} narration parts.`;
   const under = n.under || {};
   $('narrParts').innerHTML = parts.map((p, i) => {
     const x = m && m[i];
@@ -209,7 +227,7 @@ export function renderFinish() {
     </li>`;
   }).join('');
   const plan = m ? buildPlan(c, m) : null;
-  $('finSummary').textContent = plan ? `The video will be about ${X.fmtH(plan.total)} long: ${plan.clips} clips from ${plan.files.size} file${plan.files.size === 1 ? '' : 's'} and ${parts.length} narration parts.${plan.convert.size ? ` ${plan.convert.size} file${plan.convert.size === 1 ? '' : 's'} (like WMV) will have the needed parts converted first.` : ''}` : 'Upload your narration to continue.';
+  $('finSummary').textContent = plan ? `The ${c.isShort ? 'Short' : 'video'} will be about ${X.fmtH(plan.total)} long: ${plan.clips} clip${plan.clips === 1 ? '' : 's'} from ${plan.files.size} file${plan.files.size === 1 ? '' : 's'}${parts.length ? ` and ${parts.length} narration part${parts.length === 1 ? '' : 's'}` : ''}.${plan.convert.size ? ` ${plan.convert.size} file${plan.convert.size === 1 ? '' : 's'} (like WMV) will have the needed parts converted first.` : ''}` : 'Upload your narration to continue.';
   $('finExport').disabled = !plan || !!worker;
   $('finPreview').disabled = !plan;
 }
@@ -485,7 +503,7 @@ async function exportVideo() {
   if (!fileHandle) return alert('Your browser can\'t save large files directly. Please use an up-to-date Chrome on a computer.');
 
   const opts = (c.narr && c.narr.opts) || {};
-  const aspect = opts.aspect || '16:9';
+  const aspect = c.isShort ? '9:16' : opts.aspect || '16:9';
   const duckGain = (opts.duck != null ? opts.duck : 15) / 100;
   const plan = buildPlan(c, m);
   const progress = (frac, text) => { $('finProgress').classList.remove('hidden'); $('finFill').style.width = `${Math.round(frac * 100)}%`; $('finText').textContent = text; };
@@ -556,11 +574,14 @@ async function exportVideo() {
 
     // 2) Narration as 48 kHz mono
     progress(0.3, 'Reading the narration…');
-    const nb = await X.getFile(narrKey(c));
-    if (!nb) throw new Error('The narration audio is not on this computer or in the cloud. Upload it again.');
-    const ab = await new OfflineAudioContext(1, 1, 48000).decodeAudioData(await nb.arrayBuffer());
-    const pcm = new Float32Array(ab.length);
-    for (let ch = 0; ch < ab.numberOfChannels; ch++) { const d = ab.getChannelData(ch); for (let i = 0; i < d.length; i++) pcm[i] += d[i] / ab.numberOfChannels; }
+    let pcm = new Float32Array(0);
+    if (narrParts(c).length) {
+      const nb = await X.getFile(narrKey(c));
+      if (!nb) throw new Error('The narration audio is not on this computer or in the cloud. Upload it again.');
+      const ab = await new OfflineAudioContext(1, 1, 48000).decodeAudioData(await nb.arrayBuffer());
+      pcm = new Float32Array(ab.length);
+      for (let ch = 0; ch < ab.numberOfChannels; ch++) { const d = ab.getChannelData(ch); for (let i = 0; i < d.length; i++) pcm[i] += d[i] / ab.numberOfChannels; }
+    }
     // even out the narration level
     let sum = 0; for (let i = 0; i < pcm.length; i += 4) sum += pcm[i] * pcm[i];
     const rms = Math.sqrt(sum / Math.max(1, pcm.length / 4));
@@ -606,7 +627,11 @@ async function exportVideo() {
       muteHow: opts.muteHow || 'silence',
       cuts: plan.segs.map(sg => ({ T: sg.t0, kind: sg.trans || 'none' })),
       cards: plan.segs.filter(sg => sg.card).map(sg => ({ t0: sg.t0 + (sg.card.at || 0), card: sg.card })),
+      frame: c.isShort ? shortFrame(c) : null,
+      hook: c.isShort && (c.hook || '').trim() ? { text: c.hook.trim(), dur: 4 } : null,
     };
+    // a Short with the big picture: captions go under the picture
+    if (c.isShort && job.captions && job.captions.style && job.frame && job.frame.mode === 'fit') job.captions.style.y = 0.75;
     progress(0.3, 'Building the video…');
     const res = await new Promise((ok, bad) => {
       worker = new Worker('/js/story-export-worker.js');
@@ -661,15 +686,17 @@ async function previewFinal() {
   const opts = (c.narr && c.narr.opts) || {};
   const plan = buildPlan(c, m);
   const isSwear = opts.mute !== false ? muteMatcher(muteList()) : null;
+  const tall = !!c.isShort;
   const caps = await captionCues(plan, opts.caps || 'footage', '16:9', isSwear);
-  let nurl;
-  try { nurl = await narrSrc(); } catch (e) { return alert(e.message); }
+  let nurl = '';
+  if (narrParts(c).length) { try { nurl = await narrSrc(); } catch (e) { return alert(e.message); } }
+  $('fpStage').classList.toggle('tall', tall);
   const mutes = isSwear ? await planSwears(c, plan, isSwear) : null;
   const logo = opts.wm !== false ? await getLogo() : null;
   $('fpWm').classList.toggle('hidden', !logo);
   if (logo) $('fpWm').src = logoUrl;
-  PV = { wm: logo ? wmSettings() : null, plan, capMode: opts.caps || 'footage', isSwear, cues: caps ? caps.cues : [], mutes, i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), faces: new Map(plan.segs.filter(sg => sg.pic && sg.pic.file && blurData(sg.pic.file)).map(sg => [sg.pic.file.id, blurData(sg.pic.file)])), cut: null, urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
-  $('fpNarr').src = nurl;
+  PV = { wm: logo ? wmSettings() : null, plan, capMode: opts.caps || 'footage', isSwear, cues: caps ? caps.cues : [], mutes, i: -1, token: 0, playing: true, base: 0, wall: performance.now(), media: new Map(), faces: new Map(plan.segs.filter(sg => sg.pic && sg.pic.file && blurData(sg.pic.file)).map(sg => [sg.pic.file.id, blurData(sg.pic.file)])), cut: null, frame: tall ? shortFrame(c) : null, hook: tall && (c.hook || '').trim() ? c.hook.trim() : '', urls: [], duck: (opts.duck != null ? opts.duck : 15) / 100 };
+  if (nurl) $('fpNarr').src = nurl; else $('fpNarr').removeAttribute('src');
   $('fpTotal').textContent = X.fmtH(plan.total);
   $('fpBar').innerHTML = '<div id="fpFill"></div>' + plan.segs.slice(1).map(sg => `<i style="left:${sg.t0 / plan.total * 100}%"></i>`).join('');
   $('fpPlay').textContent = 'Pause';
@@ -687,7 +714,12 @@ function fxSize() {
   if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
   return [W, H];
 }
-const modeFor = (w, h, W, H) => { const r = (w / h) / (W / H); return { mode: r < 0.9 || r > 1.11 ? 'fit' : 'fill' }; };
+const modeFor = (w, h, W, H) => { if (PV && PV.frame) return PV.frame; const r = (w / h) / (W / H); return { mode: r < 0.9 || r > 1.11 ? 'fit' : 'fill' }; };
+// How footage fills a tall Short: a big picture over a blurred copy (recommended), or cropped to fill
+export function shortFrame(c) {
+  const f = c.frame || {};
+  return f.mode === 'fill' ? { mode: 'fill', x: f.x == null ? 0.5 : f.x } : { mode: 'fit', zoom: 1.35, y: 0.4 };
+}
 // Draws the picture that is showing now (with faces blurred), for blurring and transitions
 function drawPicture(x, W, H, withBlur) {
   const V = $('fpVideo'), IMG = $('fpImg');
@@ -716,7 +748,7 @@ function drawFx(T) {
   const segs = PV.plan.segs, sg = segs[PV.i];
   if (!sg) return;
   const into = T - sg.t0;
-  if (sg.pic && sg.pic.file && PV.faces.get(sg.pic.file.id)) drawPicture(x, W, H, true);
+  if ((sg.pic && sg.pic.file && PV.faces.get(sg.pic.file.id)) || PV.frame) drawPicture(x, W, H, true);
   if (PV.cut) {
     const dt = T - PV.cut.T;
     if (dt > (CaseDraw.TRANSITIONS[PV.cut.kind] || {}).d || dt < -0.2) PV.cut = null;
@@ -725,6 +757,7 @@ function drawFx(T) {
   const next = segs[PV.i + 1];
   if (next && next.trans === 'black' && next.t0 - T <= CaseDraw.TRANSITIONS.black.d / 2 && next.t0 > T) CaseDraw.drawTransition(x, W, H, 'black', T - next.t0, null);
   if (sg.card) { const a = sg.card.at || 0; if (into >= a && into < a + (sg.card.dur || 6)) CaseDraw.drawInfoCard(x, W, H, sg.card, into - a); }
+  if (PV.hook && T < 4) CaseDraw.drawHook(x, W, H, PV.hook, T, 4);
 }
 
 const nowT = () => PV.playing ? PV.base + (performance.now() - PV.wall) / 1000 : PV.base;

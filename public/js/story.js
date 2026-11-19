@@ -30,7 +30,7 @@ const label = f => f ? (f.path || f.name) : 'missing file';
 const SENT_END = /[.?!…]["'”’)\]]*$/;
 const PAUSE = 1.2;      // a pause this long counts as the end of a sentence
 const MAX_END = 25, MAX_START = 20;
-async function wholeSentences(f, start, end) {
+export async function wholeSentences(f, start, end) {
   const words = await getWords(X.cur(), f).catch(() => null);
   const dur = (f && f.duration) || Infinity;
   const r = v => Math.round(v * 100) / 100;

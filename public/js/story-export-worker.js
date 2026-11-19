@@ -317,7 +317,7 @@ async function run(job) {
   const ctx = canvas.getContext('2d', { alpha: false });
   // captions and the logo go on a separate layer, so they don't end up in the crossfade picture
   const cards = job.cards || [];
-  const layered = !!(job.captions || job.watermark || cards.length);
+  const layered = !!(job.captions || job.watermark || cards.length || job.hook);
   const out = layered ? new OffscreenCanvas(W, H) : canvas;
   const octx = layered ? out.getContext('2d', { alpha: false }) : ctx;
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
@@ -330,7 +330,7 @@ async function run(job) {
     if (!frames.has(sid)) frames.set(sid, new Frames(src));
     return frames.get(sid);
   };
-  const frameMode = src => { const r = (src.v.w / src.v.h) / (W / H); return { mode: r < 0.9 || r > 1.11 ? 'fit' : 'fill' }; };
+  const frameMode = src => { if (job.frame) return job.frame; const r = (src.v.w / src.v.h) / (W / H); return { mode: r < 0.9 || r > 1.11 ? 'fit' : 'fill' }; };
 
   // A narration part can show several of your photos/videos in a row: one picture slot each
   const vsegs = [];
@@ -414,6 +414,7 @@ async function run(job) {
     if (nb != null) CaseDraw.drawTransition(ctx, W, H, 'black', t - nb, null);
     if (layered) octx.drawImage(canvas, 0, 0);
     for (const cd of cards) if (t >= cd.t0 && t < cd.t0 + (cd.card.dur || 6)) CaseDraw.drawInfoCard(octx, W, H, cd.card, t - cd.t0);
+    if (job.hook && t < job.hook.dur) CaseDraw.drawHook(octx, W, H, job.hook.text, t, job.hook.dur);
     if (job.captions) CaseDraw.drawCaptions(octx, W, H, job.captions.cues, t, job.captions.style);
     if (job.watermark) CaseDraw.drawWatermark(octx, job.watermark.img, W, H, t, job.watermark);
     const frame = new VideoFrame(out, { timestamp: Math.round(k * 1e6 / FPS), duration: Math.round(1e6 / FPS) });

@@ -80,6 +80,7 @@ export function fileKeys(p) {
   if (p.kind === 'case') {
     keys.add(`${p.id}:n:narration`);
     for (const s of (p.story && p.story.segments) || []) for (const m of s.media || []) if (m.key) keys.add(m.key);
+    for (const sh of p.shorts || []) if (sh.narr && sh.narr.name) keys.add(`${p.id}:n:short${sh.id}`);
   }
   return [...keys];
 }

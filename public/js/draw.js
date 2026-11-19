@@ -328,5 +328,32 @@
     x.restore();
   }
 
-  root.CaseDraw = { drawMedia, mediaLayout, mediaRect, drawCaptions, watermarkBox, drawWatermark, faceBoxesAt, blurBoxes, TRANSITIONS, blackAt, drawTransition, drawInfoCard };
+  // ---------- hook line at the top of a Short ----------
+  function wrap(x, text, maxW) {
+    const words = String(text).split(/\s+/), lines = [];
+    let line = '';
+    for (const w of words) { const t = line ? line + ' ' + w : w; if (x.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t; }
+    if (line) lines.push(line);
+    return lines;
+  }
+  function drawHook(x, W, H, text, t, dur) {
+    if (!text || t < 0 || t > dur) return;
+    const a = Math.min(1, t / 0.3) * Math.min(1, (dur - t) / 0.4);
+    const size = Math.round(Math.min(W, H) * 0.068);
+    x.save();
+    x.globalAlpha = Math.max(0, a);
+    x.font = `800 ${size}px Arial, Helvetica, sans-serif`;
+    const lines = wrap(x, text, W * 0.84).slice(0, 4);
+    const lh = size * 1.22, pad = size * 0.45;
+    const bw = Math.max(...lines.map(l => x.measureText(l).width)) + pad * 2, bh = lines.length * lh + pad * 1.4;
+    const bx = (W - bw) / 2, by = H * 0.09 + (1 - Math.min(1, t / 0.3)) * -size * 0.4;
+    x.fillStyle = 'rgba(0,0,0,0.72)';
+    const r = size * 0.35;
+    x.beginPath(); x.moveTo(bx + r, by); x.arcTo(bx + bw, by, bx + bw, by + bh, r); x.arcTo(bx + bw, by + bh, bx, by + bh, r); x.arcTo(bx, by + bh, bx, by, r); x.arcTo(bx, by, bx + bw, by, r); x.fill();
+    x.fillStyle = '#ffffff'; x.textAlign = 'center'; x.textBaseline = 'top';
+    lines.forEach((l, i) => x.fillText(l, W / 2, by + pad * 0.7 + i * lh));
+    x.restore();
+  }
+
+  root.CaseDraw = { drawHook, drawMedia, mediaLayout, mediaRect, drawCaptions, watermarkBox, drawWatermark, faceBoxesAt, blurBoxes, TRANSITIONS, blackAt, drawTransition, drawInfoCard };
 })(typeof self !== 'undefined' ? self : window);

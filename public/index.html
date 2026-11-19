@@ -252,6 +252,7 @@
             <button class="tab" data-tab="research" type="button">Research</button>
             <button class="tab" data-tab="story" type="button">Story</button>
             <button class="tab" data-tab="final" type="button">Final video</button>
+            <button class="tab" data-tab="shorts" type="button">Shorts</button>
             <button class="tab" data-tab="context" type="button">Case context</button>
           </div>
 
@@ -323,6 +324,10 @@
 
           <!-- Final video -->
           <div id="ctab-final" class="hidden">
+            <div id="finShortBar" class="short-bar hidden">
+              <span>Working on a Short: <b id="finShortTitle"></b></span>
+              <button id="finShortBack" class="btn ghost small" type="button">← Back to the long video</button>
+            </div>
             <section class="fin-card">
               <h3>1. Your narration</h3>
               <p class="muted small-text">On the Story tab, click "Copy narration" and paste it into ElevenLabs as one script. Download the audio and upload it here: the app finds where each narration part starts and ends (word timing, about 4 cents for 10 minutes). You can listen to each part and nudge its start or end.</p>
@@ -336,6 +341,7 @@
             <section class="fin-card">
               <h3>2. Build the final video</h3>
               <div class="fin-opts">
+                <label id="finFrameRow" class="hidden">Picture <select id="finFrame"><option value="big">Big picture, blurred background (recommended)</option><option value="fill">Full screen (sides cut off)</option></select></label>
                 <label>Format <select id="finAspect"><option value="16:9">16:9 (YouTube video)</option><option value="9:16">9:16 (Shorts)</option></select></label>
                 <label>Captions <select id="finCaps"><option value="off">Off</option><option value="footage">What people say in the footage</option><option value="narr">Your narration</option><option value="both">Both</option></select></label>
                 <label>Footage sound under narration <input id="finDuck" type="range" min="0" max="40" step="5" value="15"> <span id="finDuckVal" class="mono">15%</span></label>
@@ -373,6 +379,18 @@
           </div>
 
           <!-- Context -->
+          <div id="ctab-shorts" class="hidden">
+            <section class="fin-card">
+              <h3>Shorts from this case</h3>
+              <p class="muted small-text">The app looks through the analysis it already has (no AI, no cost, nothing uploaded again) and suggests the strongest 30 to 60 second moments. Adjust each one, add an intro if you like (you record it yourself), then preview and export it as a 9:16 Short.</p>
+              <div class="case-actions">
+                <button id="shortsFind" class="btn primary" type="button">Find Shorts moments</button>
+                <label class="small-text muted">How many <select id="shortsCount"><option>3</option><option selected>5</option><option>8</option></select></label>
+                <span id="shortsNote" class="muted small-text"></span>
+              </div>
+            </section>
+            <ol id="shortsList" class="shorts-list"></ol>
+          </div>
           <div id="ctab-context" class="hidden">
             <p class="muted">Everything here is given to the AI when it analyzes files, builds the research and writes the narration. Fill it in before "Analyze all": it is the best way to avoid mix-ups and redoing work. Write names exactly as they should be spelled.</p>
             <div class="ctx-grid">

@@ -7,9 +7,10 @@ import { cloudStore as store } from './cloud.js';
 import { store as localStore } from './store.js';
 import { caseChecks } from './checks.js';
 import { initStory, renderStory } from './story.js';
-import { initFinish, renderFinish, footageRanges } from './finish.js';
+import { initFinish, renderFinish, footageRanges, resetFinish } from './finish.js';
+import { initShorts, renderShorts } from './shorts.js';
 import { initMedia } from './media.js';
-import { initFaces } from './faces.js';
+import { initFaces, openFaces, blurredIn } from './faces.js';
 import { initWords } from './words.js';
 import { initLines } from './lines.js';
 
@@ -96,9 +97,51 @@ async function save() {
   await store.saveProject(cur);
 }
 
+// ---------- Shorts in the Final video tab ----------
+// While a Short is open, the Final video tab works on a view of the case where the story is the
+// Short's intro and clips, with its own narration recording, framing and hook line.
+let shortTarget = null, shortProxy = null;
+function shortView(c, sh) {
+  const story = {
+    get segments() {
+      const intro = (sh.intro || '').trim();
+      return (intro ? [{ id: sh.id + 'n', type: 'narration', text: intro }] : []).concat(sh.clips);
+    },
+    trans: 'none',
+  };
+  return new Proxy(c, {
+    get(t, k) {
+      if (k === 'story') return story;
+      if (k === 'narr') return (sh.narr = sh.narr || {});
+      if (k === 'narrKey') return `${c.id}:n:short${sh.id}`;
+      if (k === 'title') return `${c.title} - ${sh.title || 'Short'}`;
+      if (k === 'isShort') return true;
+      if (k === 'frame') return sh.frame;
+      if (k === 'hook') return sh.hook;
+      return t[k];
+    },
+    set(t, k, v) {
+      if (k === 'narr') sh.narr = v; else if (k === 'frame') sh.frame = v; else if (k !== 'story') t[k] = v;
+      return true;
+    },
+  });
+}
+const finishCur = () => (cur && shortTarget && (cur.shorts || []).includes(shortTarget) ? shortProxy : cur);
+function openShort(sh) {
+  shortTarget = sh; shortProxy = shortView(cur, sh);
+  resetFinish();
+  document.querySelector('#caseTabs .tab[data-tab="final"]').click();
+}
+function leaveShort() {
+  shortTarget = null; shortProxy = null;
+  resetFinish();
+  renderFinish();
+}
+
 async function openCase(id) {
   if (running && cur && cur.id !== id && !confirm('Analysis is running for this case. Stop it and open the other case?')) return;
   if (running) stop();
+  if (shortTarget) { shortTarget = null; shortProxy = null; resetFinish(); }
   const c = await store.getProject(id);
   if (!c) return showNew();
   cur = c;
@@ -1092,8 +1135,9 @@ function wire() {
   initLines({ cur: () => cur, save, esc, fmtH, speakerMap });
   initWords({ api, putFile: (k, b) => store.putFile(k, b), getFile: k => store.getFile(k) });
   initMedia({ esc, fileById, getLocalFile, signedUrls, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
-  initFinish({ cur: () => cur, save, api, esc, fmtH, fileById, getLocalFile, linkOriginal, signedUrls, speakerMap, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
-  initFaces({ esc, fmtH, save, getLocalFile, signedUrls, footageRanges: f => (footageRanges(cur)[f.id] || []), onFacesChanged: () => renderStory() });
+  initShorts({ cur: () => cur, save, esc, fmtH, fileById, blurredIn, openFaces, openShort });
+  initFinish({ cur: finishCur, leaveShort, save, api, esc, fmtH, fileById, getLocalFile, linkOriginal, signedUrls, speakerMap, checkAccess, requestAccess, refreshUsage, putFile: (k, b) => store.putFile(k, b), putFileSafe: (k, b) => store.putFileSafe(k, b), getFile: k => store.getFile(k) });
+  initFaces({ esc, fmtH, save, getLocalFile, signedUrls, footageRanges: f => (footageRanges(cur)[f.id] || []), onFacesChanged: () => { renderStory(); renderShorts(); } });
   initStory({ cur: () => cur, contextText, save, api, esc, fmtH, fileById, getLocalFile, signedUrls, openViewer, speakerMap, refreshUsage, NATIVE_VIDEO });
   $('newCase').addEventListener('click', () => { if (running) return alert('Wait for the analysis to finish or press Stop first.'); showNew(); $('caseTitleInput').focus(); });
   const NEW_CTX = [['who', 'newWho'], ['files', 'newFiles'], ['dates', 'newDates'], ['outcome', 'newOutcome']];
@@ -1130,8 +1174,9 @@ function wire() {
   // tabs
   document.querySelectorAll('#caseTabs .tab').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('#caseTabs .tab').forEach(x => x.classList.toggle('active', x === b));
-    ['files', 'research', 'story', 'final', 'context'].forEach(t => $('ctab-' + t).classList.toggle('hidden', b.dataset.tab !== t));
+    ['files', 'research', 'story', 'final', 'shorts', 'context'].forEach(t => $('ctab-' + t).classList.toggle('hidden', b.dataset.tab !== t));
     if (b.dataset.tab === 'story') renderStory();
+    if (b.dataset.tab === 'shorts') renderShorts();
     if (b.dataset.tab === 'final') renderFinish();
   }));
 
