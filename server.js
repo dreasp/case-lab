@@ -21,6 +21,7 @@ const cloud = require('./api/cloud');
 const usage = require('./api/usage');
 const captions = require('./api/captions');
 const footage = require('./api/footage');
+const social = require('./api/social');
 usage.setDb(cloud.db);
 
 const app = express();
@@ -47,6 +48,7 @@ app.use('/api', auth.requireLogin, cloud.router);
 app.use('/api', auth.requireLogin, usage.router);
 app.use('/api', auth.requireLogin, captions.router);
 app.use('/api', auth.requireLogin, footage.router);
+app.use('/api', auth.requireLogin, social.router);
 
 // The app's own code is always fetched fresh (it's small). Reading it from Chrome's disk cache can
 // fail when the computer is low on space ("ERR_CACHE_READ_FAILURE"), which left the page blank.

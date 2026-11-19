@@ -633,8 +633,10 @@ async function exportVideo() {
       return { t0: sg.t0, dur: sg.dur, pic, sound, narr: sg.narr || null };
     });
     const job = {
-      aspect, bitrate: aspect === '9:16' ? 10_000_000 : 12_000_000,
-      sources, segs, narration: pcm, narrGain, fileHandle,
+      // a Short is built in memory (small), so the finished file starts with its index the way
+      // Instagram and YouTube want it, and it can be kept in the cloud for posting
+      aspect, bitrate: c.isShort ? 8_000_000 : aspect === '9:16' ? 10_000_000 : 12_000_000,
+      sources, segs, narration: pcm, narrGain, fileHandle: c.isShort ? null : fileHandle,
       captions: await captionCues(plan, (opts.caps || (c.isShort ? 'both' : 'footage')), aspect, opts.mute !== false ? muteMatcher(muteList()) : null),
       watermark: await watermarkJob(opts),
       muteHow: opts.muteHow || 'silence',
@@ -659,8 +661,14 @@ async function exportVideo() {
       worker.onerror = e => bad(new Error(e.message || 'The video engine stopped.'));
       worker.postMessage({ type: 'start', job }, [pcm.buffer, ...(job.watermark ? [job.watermark.img] : [])]);
     });
+    let kept = '';
+    if (c.isShort && res.blob) {
+      progress(1, 'Saving the file…');
+      const w = await fileHandle.createWritable(); await w.write(res.blob); await w.close();
+      kept = await keepShort(c, res, progress);
+    }
     progress(1, 'Done');
-    $('finResult').innerHTML = `<div class="story-note"><strong>Your video is saved</strong> as "${X.esc(fileHandle.name)}" (${X.fmtH(res.duration)} long, built in ${X.fmtH(res.seconds)}).${usedCloud.length ? `<br><span class="muted small-text">The original of ${usedCloud.map(x => `"${X.esc(x)}"`).join(', ')} wasn't on this computer, so the copy saved in the cloud was used (same sound).</span>` : ''}${res.problems.length ? `<br><br><strong>Some parts had problems:</strong><ul>${res.problems.map(p => `<li>${X.esc(p)}</li>`).join('')}</ul>` : ''}</div>`;
+    $('finResult').innerHTML = `<div class="story-note"><strong>Your video is saved</strong> as "${X.esc(fileHandle.name)}" (${X.fmtH(res.duration)} long, built in ${X.fmtH(res.seconds)}).${kept}${usedCloud.length ? `<br><span class="muted small-text">The original of ${usedCloud.map(x => `"${X.esc(x)}"`).join(', ')} wasn't on this computer, so the copy saved in the cloud was used (same sound).</span>` : ''}${res.problems.length ? `<br><br><strong>Some parts had problems:</strong><ul>${res.problems.map(p => `<li>${X.esc(p)}</li>`).join('')}</ul>` : ''}</div>`;
   } catch (e) {
     if (e.message !== 'MISSING') $('finResult').innerHTML = `<div class="story-note"><strong>${/cancel/i.test(e.message) ? 'Export cancelled' : 'The export stopped'}</strong>${/cancel/i.test(e.message) ? '' : ': ' + X.esc(e.message)}</div>`;
   } finally {
@@ -668,6 +676,29 @@ async function exportVideo() {
     $('finCancel').classList.add('hidden');
     $('finProgress').classList.add('hidden');
     renderFinish();
+  }
+}
+
+// Keeps the exported Short in the cloud, so it can be posted from the Shorts tab (or downloaded on the phone)
+async function keepShort(c, res, progress) {
+  const sh = c.short;
+  if (!sh) return '';
+  try {
+    const key = `${c.id}:s:${sh.id}`;
+    const { url } = await X.api('cloud/file-url', { key, method: 'PUT' });
+    await new Promise((ok, bad) => {
+      const x = new XMLHttpRequest();
+      x.open('PUT', url);
+      x.upload.onprogress = e => { if (e.lengthComputable) progress(1, `Keeping a copy in the cloud for posting (${Math.round(e.loaded / e.total * 100)}%)…`); };
+      x.onload = () => (x.status < 300 ? ok() : bad(new Error(`upload failed (${x.status})`)));
+      x.onerror = () => bad(new Error('upload failed'));
+      x.send(res.blob);
+    });
+    sh.video = { at: Date.now(), size: res.blob.size, duration: res.duration };
+    await X.save();
+    return '<br>A copy is kept in the cloud: go back to the Shorts tab to post it or schedule it.';
+  } catch (e) {
+    return `<br><span class="muted small-text">The copy for posting could not be saved in the cloud (${X.esc(e.message)}). Export again to post from the app.</span>`;
   }
 }
 

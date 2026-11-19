@@ -490,6 +490,42 @@ Return JSON: { "intros": [ { "id": the short's id, "intro": the intro, "outro": 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ---------- Post details for a Short: titles, a description and hashtags ----------
+router.post('/case/short-post', async (req, res) => {
+  try {
+    const { title, context, short } = req.body || {};
+    const x = short || {};
+    const prompt = `${STYLE}
+
+You write the post details for a vertical Short (YouTube Shorts, Instagram Reels, TikTok) cut from real police footage of a true crime case, for the channel "Crime and Psyche".
+
+CASE: ${title || ''}
+CASE CONTEXT (written by the creator, trust it):
+"""${String(context || '').slice(0, 12000)}"""
+
+THE SHORT: "${x.title || ''}"
+The creator's intro: ${x.intro || '(none)'}
+The creator's ending: ${x.outro || '(none)'}
+What is said in the clip:
+${String(x.transcript || '').slice(0, 2500)}
+
+Write:
+1. "titles": 3 different title options, each under 70 characters. Clear and intriguing, built on the key person's name or the place where it fits. Serious and victim-centered, never clickbait, never gory, no ALL CAPS, no emojis, no em dashes.
+2. "description": 1 or 2 short sentences (under 220 characters) that name the key people and the place and month and year for search, and say what the viewer is about to see. Do NOT reveal what happened in the end, the outcome, the verdict or the sentence. Say "police say" or "alleged" where something is not proven. Then a line: "Watch the full case on Crime and Psyche."
+3. "hashtags": 6 to 8 hashtags without the # sign, lowercase, no spaces: always "truecrime" and "shorts", then the key names, the city or state, and fitting topic tags (for example "bodycam", "interrogation", "911call"). Never hashtags that mock or sensationalize the victim.
+Never use the word "fascinating".
+
+Return JSON: { "titles": ["...", "...", "..."], "description": "...", "hashtags": ["...", "..."] }`;
+    const out = await generateJSON([{ text: prompt }], { temperature: 0.7 });
+    const clean = t => String(t || '').replace(/\s*[—–]\s*/g, ', ').trim();
+    res.json({
+      titles: ((out && out.titles) || []).map(clean).filter(Boolean).slice(0, 3),
+      description: clean(out && out.description),
+      hashtags: ((out && out.hashtags) || []).map(t => String(t).replace(/^#/, '').replace(/\s+/g, '').toLowerCase()).filter(Boolean).slice(0, 12),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ---------- Online research: what news and court sources say about the case ----------
 router.post('/case/web-research', async (req, res) => {
   try {

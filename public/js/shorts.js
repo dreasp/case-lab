@@ -9,10 +9,22 @@
 import { wholeSentences } from './story.js';
 import { addFiles, casePhotoItem, stripHtml, fillThumbs, openTrim } from './media.js';
 import { linesBetween, linesHtml, applyLineEdit } from './lines.js';
+import { initSocial, postHtml, wireSocialList, refreshSocial } from './social.js';
 
 const $ = id => document.getElementById(id);
 let X = null;
-export function initShorts(helpers) { X = helpers; wire(); }
+export function initShorts(helpers) {
+  X = helpers; wire();
+  initSocial({ ...X, rerender: function again() {
+    if ($('ctab-shorts').classList.contains('hidden')) return;
+    // never redraw under someone typing
+    const a = document.activeElement;
+    if (a && $('shortsList').contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'radio') { clearTimeout(again.t); again.t = setTimeout(again, 1500); return; }
+    renderShorts();
+  }, clipsText: sh => sh.clips.map(k => { const f = X.fileById(k.file); return f ? clipText(f, k.start, k.end) : ''; }).join('\n') });
+  wireSocialList($('shortsList'), id => shorts(X.cur()).find(x => x.id === id));
+}
+export { refreshSocial };
 
 const MIN = 30, MAX = 60;
 const KIND = { reveal: 3, emotional: 2.5, action: 2, dialogue: 1.5, context: 0 };
@@ -128,6 +140,7 @@ export function renderShorts() {
       <details class="seg-vis short-media" ${(sh.endMedia || []).length ? 'open' : ''}><summary>Photos or videos at the end${(sh.endMedia || []).length ? ` (${sh.endMedia.length})` : ''}</summary>
         ${stripHtml(sh.endMedia || [], sh.id + '|endMedia', casePhotos, 'Shown after the clip. Photos 3.5 seconds each; videos play with their sound.', 0)}
       </details>
+      ${postHtml(c, sh)}
       <div class="short-actions">
         <button class="btn primary" data-sa="open" type="button">Preview and export</button>
         <button class="btn ghost" data-sa="delete" type="button">Delete</button>

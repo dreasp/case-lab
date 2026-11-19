@@ -24,8 +24,12 @@ One app for two jobs:
 | `R2_SECRET_ACCESS_KEY` | R2 API token secret |
 | `R2_BUCKET` | R2 bucket name, e.g. `case-lab` |
 | `ASSEMBLYAI_API_KEY` | AssemblyAI key, for word-by-word caption timing |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google Cloud OAuth client (YouTube Data API v3), for posting Shorts to YouTube. Redirect URI: `https://<app>/api/social/youtube/callback` |
+| `IG_APP_ID` / `IG_APP_SECRET` | Meta app, "Instagram API with Instagram login", for posting Reels. Redirect URI: `https://<app>/api/social/instagram/callback` |
 
 Without the cloud settings, projects are saved in the browser only. With them, every project is saved in the browser and in the cloud, so it opens on any computer. Check the setup at `/api/cloud/check`.
+
+Scheduled Instagram posts are sent by the server, so it must be awake at the scheduled time: point a free uptime pinger (UptimeRobot, cron-job.org) at `/health` every 10 minutes. YouTube holds scheduled videos itself.
 
 ## Run on your computer
 

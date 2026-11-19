@@ -8,7 +8,7 @@ import { store as localStore } from './store.js';
 import { caseChecks } from './checks.js';
 import { initStory, renderStory } from './story.js';
 import { initFinish, renderFinish, footageRanges, resetFinish } from './finish.js';
-import { initShorts, renderShorts } from './shorts.js';
+import { initShorts, renderShorts, refreshSocial } from './shorts.js';
 import { initMedia } from './media.js';
 import { initFaces, openFaces, blurredIn } from './faces.js';
 import { initWords } from './words.js';
@@ -126,6 +126,7 @@ function shortView(c, sh) {
       if (k === 'narrKey') return `${c.id}:n:short${sh.id}`;
       if (k === 'title') return `${c.title} - ${sh.title || 'Short'}`;
       if (k === 'isShort') return true;
+      if (k === 'short') return sh;
       if (k === 'frame') return sh.frame;
       if (k === 'hook') return sh.hook;
       return t[k];
@@ -1208,7 +1209,7 @@ function wire() {
     document.querySelectorAll('#caseTabs .tab').forEach(x => x.classList.toggle('active', x === b));
     ['files', 'research', 'story', 'final', 'shorts', 'context'].forEach(t => $('ctab-' + t).classList.toggle('hidden', b.dataset.tab !== t));
     if (b.dataset.tab === 'story') renderStory();
-    if (b.dataset.tab === 'shorts') renderShorts();
+    if (b.dataset.tab === 'shorts') { renderShorts(); refreshSocial(); }
     if (b.dataset.tab === 'final') renderFinish();
   }));
 
