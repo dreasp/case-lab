@@ -256,7 +256,7 @@ async function renderShots() {
       const pl = project.placed.find(x => x.id === seg.place);
       const o = ownOf(project, pl.own);
       const covered = project.sentences.filter(x => x.end > seg.start + 0.05 && x.start < seg.end - 0.05);
-      const more = covered.length > 1 ? ` <em class="cont">(+${covered.length - 1} more sentence${covered.length > 2 ? 's' : ''})</em>` : '';
+      const more = covered.slice(1).map(x => `<br><em class="cont">+</em> ${esc(x.text)}`).join('');
       const uses = o.type === 'video' ? ` · plays ${fmt(pl.from || 0)} to ${fmt((pl.from || 0) + (seg.end - seg.start))} of the clip` : '';
       return `<li class="shot own ${i === selectedShot ? 'selected' : ''}" data-i="${i}">
       <div class="shot-time mono">${fmt(seg.start)}</div>
@@ -288,7 +288,7 @@ async function renderShots() {
       <div class="shot-time mono">${fmt(seg.start)}</div>
       <div class="shot-media">${media}<span class="dot ${kind}"></span></div>
       <div class="shot-body">
-        <p>${cont ? '<em class="cont">continued</em> ' : ''}${esc(sen ? sen.text : '')}${shot.through ? (() => { const n = project.sentences.findIndex(x => x.id === shot.through) - project.sentences.indexOf(sen); return n > 0 ? ` <em class="cont">(joined: +${n} more sentence${n > 1 ? 's' : ''})</em>` : ''; })() : ''}</p>
+        <p>${cont ? '<em class="cont">continued</em> ' : ''}${esc(sen ? sen.text : '')}${shot.through ? (() => { const i0 = project.sentences.indexOf(sen), i1 = project.sentences.findIndex(x => x.id === shot.through); return i1 > i0 ? project.sentences.slice(i0 + 1, i1 + 1).map(x => `<br><em class="cont">joined +</em> ${esc(x.text)}`).join('') : ''; })() : ''}</p>
         <div class="shot-meta">${src}${edited.length ? `<span class="edited">${edited.join(', ')}</span>` : ''}${why}</div>
       </div>
       <div class="shot-actions">
@@ -948,6 +948,7 @@ async function openEditor(i) {
   ed.mode = 'shot'; ed.pl = null;
   ed.cs = shot.start; ed.ce = shot.end;
   $('cutBox').classList.remove('hidden');
+  $('cutSplit').classList.remove('hidden');
   updateCutLabels();
   $('trimPlay').classList.remove('hidden');
   ed.len = shot.end - shot.start;
@@ -1018,14 +1019,13 @@ function drawEditor() {
 function updateTrimLabel() {
   if (ed.mode === 'place') {
     const video = ed.el && ed.el.tagName === 'VIDEO';
-    ed.len = video ? ed.end - ed.start : ed.end;
-    const until = ed.at + ed.len;
-    $('trimLabel').textContent = video ? `${fmt(ed.start)} to ${fmt(ed.end)} of the clip` : `${ed.len.toFixed(1)} s`;
-    const covered = project.sentences.filter(x => x.end > ed.at + 0.05 && x.start < until - 0.05);
-    const last = covered[covered.length - 1];
-    $('editTime').textContent = `Your file · on screen ${fmt(ed.at)} to ${fmt(until)} (${ed.len.toFixed(1)} s) · ${covered.length} sentence${covered.length === 1 ? '' : 's'}`;
-    $('trimInfo').textContent = (last && until < last.end - 0.3 ? 'After it, the stock footage fills the rest of the sentence. ' : '') +
-      (ed.len >= ed.room - 0.05 ? `It can't go longer here: ${ed.room < (project.duration - ed.at) - 0.05 ? 'another of your files starts right after' : 'the narration ends'}.` : 'Make it longer to carry on into the next sentences.');
+    if (!video) return;
+    const d = ed.el.duration || 0;
+    $('trimLabel').textContent = `${fmt(ed.start)} to ${fmt(Math.min(d, ed.start + ed.len))} of the clip`;
+    const over = ed.start + ed.len - d;
+    $('trimInfo').textContent = over > 0.05
+      ? `The clip ends ${over.toFixed(1)}s before this spot does, so its last frame stays on screen until the end. Slide Start earlier to avoid that.`
+      : 'Slide to choose where in your video it starts playing. How long it stays on screen is set below.';
     return;
   }
   $('trimLabel').textContent = `${fmt(ed.start)} to ${fmt(ed.start + ed.len)}`;
@@ -1039,26 +1039,8 @@ function stopEditorPlay() {
 
 $('trimRange').addEventListener('input', () => {
   ed.start = +$('trimRange').value;
-  if (ed.mode === 'place') {
-    // keep at least half a second, and no longer than the room there is
-    if (ed.end < ed.start + 0.5) ed.end = ed.start + 0.5;
-    if (ed.end - ed.start > ed.room) ed.end = ed.start + ed.room;
-    $('plEnd').value = ed.end;
-  }
   if (ed.playing) stopEditorPlay();
   if (ed.el) ed.el.currentTime = ed.start;
-  updateTrimLabel();
-});
-
-$('plEnd').addEventListener('input', () => {
-  ed.end = +$('plEnd').value;
-  if (ed.el && ed.el.tagName === 'VIDEO') {
-    if (ed.end < ed.start + 0.5) { ed.start = Math.max(0, ed.end - 0.5); }
-    if (ed.end - ed.start > ed.room) ed.start = ed.end - ed.room;
-    $('trimRange').value = ed.start;
-    if (ed.playing) stopEditorPlay();
-    ed.el.currentTime = Math.max(ed.start, ed.end - 0.05);
-  }
   updateTrimLabel();
 });
 
@@ -1071,20 +1053,26 @@ async function openPlaceEditor(plId) {
   renderer.releaseAll();
   closeEditorMedia();
   ed.mode = 'place'; ed.pl = pl; ed.i = -1;
-  $('cutBox').classList.add('hidden');
-  ed.at = placedRanges(project).find(r => r.pl.id === plId)?.at ?? placeStart(project, pl);
-  ed.room = roomAt(project, ed.at, plId);
+  const r = placedRanges(project).find(x => x.pl.id === plId);
+  ed.cs = r ? r.at : placeStart(project, pl);
+  ed.ce = r ? r.end : ed.cs + pl.len;
+  ed.len = ed.ce - ed.cs;
   ed.frame = { x: 0.5, y: 0.5, zoom: 1, mode: 'auto', ...((pl.frames || {})[aspectOf()] || defFrame() || {}) };
   const photo = o.type !== 'video';
   trimMode(true, photo);
-  $('editText').textContent = `${o.name}`;
+  $('plEndRow').classList.add('hidden');
+  $('plStartName').classList.add('hidden');
+  $('plStartRow').classList.remove('hidden');
+  $('cutBox').classList.remove('hidden');
+  $('cutSplit').classList.add('hidden');
+  $('editText').textContent = o.name;
+  updateCutLabels();
   const [W, H] = SIZES[aspectOf()];
   const c = $('editCanvas');
   c.width = W / 3; c.height = H / 3;
   c.classList.toggle('portrait', aspectOf() === '9:16');
   $('editStatus').textContent = 'Loading…';
   $('trimBox').classList.add('hidden');
-  $('trimPlay').classList.toggle('hidden', photo);
   $('editDialog').showModal();
   try {
     const sources = await mediaSources({ custom: o.key, type: o.type });
@@ -1095,21 +1083,17 @@ async function openPlaceEditor(plId) {
       const d = v.duration || o.dur || 0;
       if (d && Math.abs(d - (o.dur || 0)) > 0.2) o.dur = d;
       ed.start = Math.min(pl.from || 0, Math.max(0, d - 0.5));
-      ed.end = Math.min(d, ed.start + Math.min(pl.len, ed.room));
       $('trimRange').max = Math.max(0, d - 0.5).toFixed(1);
-      $('plEnd').min = '0.5'; $('plEnd').max = d.toFixed(1);
-      $('trimRange').value = ed.start; $('plEnd').value = ed.end;
+      $('trimRange').value = ed.start;
       v.currentTime = ed.start;
+      $('trimPlay').classList.remove('hidden');
+      $('trimBox').classList.remove('hidden');
+      updateTrimLabel();
     } else {
       const res = await loadImage(sources).catch(() => { throw new Error(whyNotLoadingOwn); });
       ed.el = res.img;
       ed.start = 0;
-      ed.end = Math.min(pl.len, ed.room);
-      $('plEnd').min = '1'; $('plEnd').max = Math.max(1, Math.min(ed.room, 120)).toFixed(1);
-      $('plEnd').value = ed.end;
     }
-    $('trimBox').classList.remove('hidden');
-    updateTrimLabel();
     $('editStatus').textContent = '';
     updateFrameControls();
     drawEditor();
@@ -1185,6 +1169,12 @@ $('editDialog').addEventListener('close', closeEditorMedia);
 // ---------- cut timing: move the cuts, join and split shots ----------
 const fmt1 = t => { t = Math.max(0, t || 0); return `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`; };
 function cutLimits() {
+  if (ed.mode === 'place') {
+    const others = placedRanges(project).filter(r => r.pl.id !== ed.pl.id);
+    const before = others.filter(r => r.end <= ed.cs + 0.01).map(r => r.end);
+    const after = others.filter(r => r.at >= ed.ce - 0.01).map(r => r.at);
+    return { sMin: before.length ? Math.max(...before) : 0, sMax: ed.ce - 0.5, eMin: ed.cs + 0.5, eMax: after.length ? Math.min(...after) : project.duration, fixedS: false, fixedE: false };
+  }
   const prev = project.shots[ed.i - 1], next = project.shots[ed.i + 1];
   return {
     sMin: prev ? prev.start + 0.5 : 0, sMax: ed.ce - 0.5,
@@ -1200,6 +1190,12 @@ function updateCutLabels() {
   document.querySelectorAll('#cutBox [data-cut="e"]').forEach(b => { b.disabled = L.fixedE; });
   ed.len = ed.ce - ed.cs;
   const len = ed.len;
+  if (ed.mode === 'place') {
+    const covered = project.sentences.filter(x => x.end > ed.cs + 0.05 && x.start < ed.ce - 0.05);
+    $('editTime').textContent = `Your file · on screen ${fmt1(ed.cs)} to ${fmt1(ed.ce)} (${len.toFixed(1)}s) · ${covered.length} sentence${covered.length === 1 ? '' : 's'}`;
+    updateTrimLabel();
+    return;
+  }
   $('editTime').textContent = `${fmt(ed.cs)} to ${fmt(ed.ce)} · ${len.toFixed(1)}s on screen · ${aspectOf() === '9:16' ? '9:16 Short' : '16:9'}`;
   if (ed.el && ed.el.tagName === 'VIDEO') {
     const d = ed.el.duration || 0;
@@ -1284,20 +1280,20 @@ async function saveEditor(keepOpen) {
     const pl = ed.pl;
     const frames = { ...(pl.frames || {}) };
     const f = ed.frame;
-    const isDefault = sameFrame(f, defFrame() || {});
-    if (isDefault) delete frames[aspectOf()]; else frames[aspectOf()] = { ...f };
+    if (sameFrame(f, defFrame() || {})) delete frames[aspectOf()]; else frames[aspectOf()] = { ...f };
     pl.frames = frames;
-    if (ed.el) {
-      const video = ed.el.tagName === 'VIDEO';
-      pl.from = video ? +ed.start.toFixed(2) : 0;
-      pl.len = +(video ? ed.end - ed.start : ed.end).toFixed(2);
-    }
+    // where it is on the narration: kept relative to the sentence it starts in
+    const sen = project.sentences.find(x => ed.cs >= x.start - 0.01 && ed.cs < x.end) || project.sentences[project.sentences.length - 1];
+    pl.sid = sen.id;
+    pl.off = +Math.max(0, ed.cs - sen.start).toFixed(2);
+    pl.len = +(ed.ce - ed.cs).toFixed(2);
+    if (ed.el && ed.el.tagName === 'VIDEO') pl.from = +ed.start.toFixed(2);
     closeEditorMedia();
     $('editDialog').close();
     renderer.invalidate('pl' + pl.id);
     await save();
     await ownChanged(true);
-    renderer.showFrame(ed.at + 0.01).catch(() => {});
+    goTo(ed.cs);
     return;
   }
   const shot = project.shots[ed.i];

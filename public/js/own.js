@@ -71,7 +71,7 @@ export function timeline(p) {
   for (const c of cover) {
     segs.push({
       id: 'pl' + c.pl.id, start: c.at, end: c.end, choice: choiceFor(c.o), place: c.pl.id, sid: c.pl.sid,
-      edit: { start: c.o.type === 'video' ? (c.pl.from || 0) : 0, frames: c.pl.frames || {} },
+      edit: { start: c.o.type === 'video' ? (c.pl.from || 0) : 0, frames: c.pl.frames || {}, hold: true },
     });
   }
   segs.sort((a, b) => a.start - b.start);

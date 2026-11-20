@@ -186,6 +186,7 @@ function closeShot(m) {
 // Which moment of the clip to show, `into` seconds after the shot starts
 function clipTime(shot, m, into) {
   const d = m.duration || 0;
+  if (shot.edit && shot.edit.hold) { const t = (shot.edit.start || 0) + into; return d ? Math.min(t, d - 0.05) : t; }
   const start = (shot.edit && shot.edit.start) || (d > 3 ? 0.5 : 0);
   const t = start + into;
   if (!d || t < d - 0.05) return t;

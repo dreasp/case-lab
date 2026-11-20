@@ -122,7 +122,7 @@ export class Renderer {
         if (!sources || !sources.length) throw new Error('no url');
         if (shot.choice.type === 'video') {
           const v = await loadVideo(sources);
-          v.loop = true;
+          v.loop = !(shot.edit && shot.edit.hold);
           // Jump to the chosen start point now, so the shot starts instantly later
           const target = this.clipTime(shot, v, 0);
           if (Math.abs(v.currentTime - target) > 0.05) { v.currentTime = target; await waitFor(v, 'seeked', 15000); }
@@ -146,6 +146,8 @@ export class Renderer {
   // Where in the clip we should be, `into` seconds after the shot starts
   clipTime(shot, v, into) {
     const d = v.duration || 0;
+    // your own placed videos stop on their last frame instead of starting over
+    if (shot.edit && shot.edit.hold) { const t = (shot.edit.start || 0) + into; return d ? Math.min(t, d - 0.05) : t; }
     const start = this.startPoint(shot) || (d > 3 ? 0.5 : 0);
     if (!d) return start;
     const t = start + into;
