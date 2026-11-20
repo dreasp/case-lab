@@ -168,16 +168,23 @@ export function retimeShots(project) {
   });
   if (starts.some(v => v === null)) return 0;
   let moved = 0;
+  const old = project.sentences.map(sen => [sen.start, sen.end]);
   project.sentences.forEach((sen, i) => {
     const s = i === 0 ? 0 : starts[i];
     const e = i + 1 < starts.length ? starts[i + 1] : project.duration;
     if (Math.abs(sen.start - s) > 0.05) moved++;
     sen.start = s; sen.end = Math.max(e, s + 0.3);
   });
-  for (const sen of project.sentences) {
-    const parts = project.shots.filter(sh => sh.sid === sen.id);
-    const d = (sen.end - sen.start) / Math.max(1, parts.length);
-    parts.forEach((sh, k) => { sh.start = sen.start + d * k; sh.end = sen.start + d * (k + 1); });
-  }
+  // Every cut keeps its place inside its sentence (so joined shots and cuts you moved by hand
+  // stay as they are), stretched to the sentence's real timing
+  const map = t => {
+    let i = old.findIndex(([a, b]) => t >= a - 1e-6 && t < b);
+    if (i < 0) i = t <= old[0][0] ? 0 : old.length - 1;
+    const [a, b] = old[i], sen = project.sentences[i];
+    const f = b > a ? Math.min(1, Math.max(0, (t - a) / (b - a))) : 0;
+    return sen.start + f * (sen.end - sen.start);
+  };
+  for (const sh of project.shots) { sh.start = map(sh.start); sh.end = sh.end >= project.duration - 0.01 ? project.duration : map(sh.end); }
+  project.shots.forEach((sh, i) => { if (i) sh.start = project.shots[i - 1].end; });
   return moved;
 }

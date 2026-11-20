@@ -639,6 +639,17 @@
             <input id="plEnd" type="range" min="0" max="0" step="0.1" value="0"></label>
           <p id="trimInfo" class="muted small-text"></p>
         </div>
+        <div id="cutBox" class="hidden">
+          <h4>When it starts and ends</h4>
+          <div class="cut-row"><span class="small-text muted cut-name">Starts</span><span id="cutStart" class="mono"></span>
+            <button class="btn ghost small" type="button" data-cut="s" data-d="-0.5">−0.5s</button><button class="btn ghost small" type="button" data-cut="s" data-d="-0.1">−0.1s</button><button class="btn ghost small" type="button" data-cut="s" data-d="0.1">+0.1s</button><button class="btn ghost small" type="button" data-cut="s" data-d="0.5">+0.5s</button>
+            <button class="btn small" type="button" data-listen="s">▶ Listen</button></div>
+          <div class="cut-row"><span class="small-text muted cut-name">Ends</span><span id="cutEnd" class="mono"></span>
+            <button class="btn ghost small" type="button" data-cut="e" data-d="-0.5">−0.5s</button><button class="btn ghost small" type="button" data-cut="e" data-d="-0.1">−0.1s</button><button class="btn ghost small" type="button" data-cut="e" data-d="0.1">+0.1s</button><button class="btn ghost small" type="button" data-cut="e" data-d="0.5">+0.5s</button>
+            <button class="btn small" type="button" data-listen="e">▶ Listen</button></div>
+          <p class="muted small-text">Moves the cut to or from the shot before or after. ▶ Listen plays your narration around that cut, so you can hear where it falls.</p>
+          <button id="cutSplit" class="btn ghost small" type="button" title="Cut this shot in two at its middle (both halves keep this clip, so you can swap one)">Split this shot in two</button>
+        </div>
         <h4>Picture</h4>
         <div id="modeSeg" class="seg">
           <button data-mode="fill" type="button">Fill the frame</button>

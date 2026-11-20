@@ -137,6 +137,9 @@ input:focus { outline: none; border-color: var(--gold); }
 .own-body input { width: 100%; }
 .own-in { color: #b48cf0; }
 .own-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.cut-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin: 4px 0; }
+.cut-row .cut-name { width: 44px; }
+.cut-row .mono { width: 56px; }
 .trim-lab { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
 .trim-lab input { width: 100%; }
 @media (max-width: 700px) { .own-item { grid-template-columns: 72px 1fr; } .own-thumb { width: 72px; height: 40px; } .own-btns { grid-column: 1 / -1; justify-content: flex-start; } }

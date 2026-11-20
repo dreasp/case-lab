@@ -288,12 +288,13 @@ async function renderShots() {
       <div class="shot-time mono">${fmt(seg.start)}</div>
       <div class="shot-media">${media}<span class="dot ${kind}"></span></div>
       <div class="shot-body">
-        <p>${cont ? '<em class="cont">continued</em> ' : ''}${esc(sen ? sen.text : '')}</p>
+        <p>${cont ? '<em class="cont">continued</em> ' : ''}${esc(sen ? sen.text : '')}${shot.through ? (() => { const n = project.sentences.findIndex(x => x.id === shot.through) - project.sentences.indexOf(sen); return n > 0 ? ` <em class="cont">(joined: +${n} more sentence${n > 1 ? 's' : ''})</em>` : ''; })() : ''}</p>
         <div class="shot-meta">${src}${edited.length ? `<span class="edited">${edited.join(', ')}</span>` : ''}${why}</div>
       </div>
       <div class="shot-actions">
         <button class="btn small" data-act="swap">Swap</button>
         ${c ? '<button class="btn small ghost" data-act="edit">Adjust</button>' : ''}
+        ${seg.base < project.shots.length - 1 ? '<button class="btn small ghost" data-act="join" title="Join with the next shot: this clip keeps playing through it">Join ↓</button>' : ''}
         <button class="btn small ghost" data-act="play">▶ From here</button>
       </div>
     </li>`;
@@ -323,6 +324,7 @@ $('shotList').addEventListener('click', async e => {
     }
   } else {
     if (act === 'swap') return openSwap(seg.base);
+    if (act === 'join') return joinShot(seg.base);
     if (act === 'edit') return openEditor(seg.base);
   }
   if (!renderer.running) renderer.showFrame(seg.start + 0.01).catch(() => {});
@@ -944,6 +946,9 @@ async function openEditor(i) {
   closeEditorMedia();
   ed.i = i;
   ed.mode = 'shot'; ed.pl = null;
+  ed.cs = shot.start; ed.ce = shot.end;
+  $('cutBox').classList.remove('hidden');
+  updateCutLabels();
   $('trimPlay').classList.remove('hidden');
   ed.len = shot.end - shot.start;
   trimMode(false);
@@ -1066,6 +1071,7 @@ async function openPlaceEditor(plId) {
   renderer.releaseAll();
   closeEditorMedia();
   ed.mode = 'place'; ed.pl = pl; ed.i = -1;
+  $('cutBox').classList.add('hidden');
   ed.at = placedRanges(project).find(r => r.pl.id === plId)?.at ?? placeStart(project, pl);
   ed.room = roomAt(project, ed.at, plId);
   ed.frame = { x: 0.5, y: 0.5, zoom: 1, mode: 'auto', ...((pl.frames || {})[aspectOf()] || defFrame() || {}) };
@@ -1176,7 +1182,104 @@ function closeEditorMedia() {
 $('editCancel').addEventListener('click', () => { closeEditorMedia(); $('editDialog').close(); });
 $('editDialog').addEventListener('close', closeEditorMedia);
 
-$('editSave').addEventListener('click', async () => {
+// ---------- cut timing: move the cuts, join and split shots ----------
+const fmt1 = t => { t = Math.max(0, t || 0); return `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`; };
+function cutLimits() {
+  const prev = project.shots[ed.i - 1], next = project.shots[ed.i + 1];
+  return {
+    sMin: prev ? prev.start + 0.5 : 0, sMax: ed.ce - 0.5,
+    eMin: ed.cs + 0.5, eMax: next ? next.end - 0.5 : project.duration,
+    fixedS: !prev, fixedE: !next,
+  };
+}
+function updateCutLabels() {
+  const L = cutLimits();
+  $('cutStart').textContent = fmt1(ed.cs);
+  $('cutEnd').textContent = fmt1(ed.ce);
+  document.querySelectorAll('#cutBox [data-cut="s"], #cutBox [data-listen="s"]').forEach(b => { b.disabled = L.fixedS && b.dataset.cut; });
+  document.querySelectorAll('#cutBox [data-cut="e"]').forEach(b => { b.disabled = L.fixedE; });
+  ed.len = ed.ce - ed.cs;
+  const len = ed.len;
+  $('editTime').textContent = `${fmt(ed.cs)} to ${fmt(ed.ce)} · ${len.toFixed(1)}s on screen · ${aspectOf() === '9:16' ? '9:16 Short' : '16:9'}`;
+  if (ed.el && ed.el.tagName === 'VIDEO') {
+    const d = ed.el.duration || 0;
+    $('trimRange').max = Math.max(0, d - len).toFixed(1);
+    if (ed.start > d - len) { ed.start = Math.max(0, d - len); $('trimRange').value = ed.start; }
+    $('trimInfo').textContent = d < len ? `This clip is ${d.toFixed(1)}s, shorter than the shot (${len.toFixed(1)}s), so it will loop.` : `The clip is ${fmt(d)} long. Slide to choose which ${len.toFixed(1)} seconds play.`;
+    updateTrimLabel();
+  }
+}
+document.querySelectorAll('#cutBox [data-cut]').forEach(b => b.addEventListener('click', () => {
+  const L = cutLimits(), d = +b.dataset.d;
+  if (b.dataset.cut === 's') ed.cs = Math.min(L.sMax, Math.max(L.sMin, +(ed.cs + d).toFixed(2)));
+  else ed.ce = Math.min(L.eMax, Math.max(L.eMin, +(ed.ce + d).toFixed(2)));
+  updateCutLabels();
+}));
+// Plays the narration from 2 seconds before a cut to just after it
+let listenSrc = null;
+document.querySelectorAll('#cutBox [data-listen]').forEach(b => b.addEventListener('click', async () => {
+  try {
+    const buf = await renderer.ensureAudio();
+    if (renderer.actx.state === 'suspended') await renderer.actx.resume();
+    if (listenSrc) try { listenSrc.stop(); } catch (e) { /* done */ }
+    const t = b.dataset.listen === 's' ? ed.cs : ed.ce;
+    listenSrc = renderer.actx.createBufferSource();
+    listenSrc.buffer = buf;
+    listenSrc.connect(renderer.actx.destination);
+    const from = Math.max(0, t - 2);
+    listenSrc.start(0, from, (t - from) + 1);
+    b.textContent = '♪ cut at the end';
+    setTimeout(() => { b.textContent = '▶ Listen'; }, ((t - from) + 1) * 1000);
+  } catch (e) { alert('Could not play the narration: ' + e.message); }
+}));
+$('cutSplit').addEventListener('click', async () => {
+  const shot = project.shots[ed.i];
+  const mid = +((ed.cs + ed.ce) / 2).toFixed(2);
+  if (ed.ce - ed.cs < 1.2) return alert('This shot is too short to split.');
+  await saveEditor(true);
+  closeEditorMedia();
+  $('editDialog').close();
+  const second = {
+    ...JSON.parse(JSON.stringify(shot)), id: 'shot' + Date.now().toString(36), start: mid, end: shot.end, part: (shot.part || 0) + 1,
+  };
+  if (shot.choice) second.choice = shot.choice;
+  if (shot.choice && shot.choice.type === 'video') second.edit = { ...(shot.edit || {}), start: ((shot.edit && shot.edit.start) || 0) + (mid - shot.start) };
+  shot.end = mid;
+  // a joined shot that runs over several sentences: each half belongs to the sentence it starts in
+  if (shot.through) {
+    const at = t => project.sentences.find(s => t >= s.start - 0.01 && t < s.end);
+    const s2 = at(mid + 0.01);
+    if (s2 && s2.id !== shot.sid) { second.sid = s2.id; second.part = 0; }
+    if (second.through === second.sid) delete second.through;
+    const s1end = at(mid - 0.02);
+    if (s1end && s1end.id !== shot.sid) shot.through = s1end.id; else delete shot.through;
+  }
+  project.shots.splice(ed.i + 1, 0, second);
+  renderer.invalidate(shot.id);
+  await save();
+  await renderShots();
+  renderHeader();
+  alert('Split. Both halves show this clip for now: use Swap on either one to change it.');
+});
+
+async function joinShot(bi) {
+  const a = project.shots[bi], b = project.shots[bi + 1];
+  if (!a || !b) return;
+  if (!confirm(`Join this shot with the next one?\n\n${a.choice ? 'This clip keeps playing' : 'This shot runs on'} until ${fmt(b.end)}, and the next shot's footage is dropped. You can split it again later in Adjust.`)) return;
+  renderer.stop();
+  a.end = b.end;
+  if (b.sid !== a.sid || b.through) a.through = b.through || b.sid;
+  if (!a.choice && b.choice) { a.choice = b.choice; a.edit = b.edit; }
+  project.shots.splice(bi + 1, 1);
+  renderer.invalidate(a.id);
+  await save();
+  await renderShots();
+  renderHeader();
+  goTo(a.start);
+}
+
+$('editSave').addEventListener('click', () => saveEditor(false));
+async function saveEditor(keepOpen) {
   if (ed.mode === 'place') {
     const pl = ed.pl;
     const frames = { ...(pl.frames || {}) };
@@ -1198,19 +1301,28 @@ $('editSave').addEventListener('click', async () => {
     return;
   }
   const shot = project.shots[ed.i];
+  // the cuts: this shot's start/end, and its neighbours' end/start
+  if (Math.abs(ed.cs - shot.start) > 0.001 || Math.abs(ed.ce - shot.end) > 0.001) {
+    const prev = project.shots[ed.i - 1], next = project.shots[ed.i + 1];
+    shot.start = ed.cs; shot.end = ed.ce;
+    if (prev) prev.end = ed.cs;
+    if (next) { next.start = ed.ce; renderer.invalidate(next.id); }
+    if (prev) renderer.invalidate(prev.id);
+  }
   const frames = { ...((shot.edit && shot.edit.frames) || {}) };
   const f = ed.frame;
   const isDefault = sameFrame(f, defFrame() || {});
   if (isDefault) delete frames[aspectOf()]; else frames[aspectOf()] = { ...f };
   shot.edit = { start: shot.choice.type === 'video' ? ed.start : 0, frames };
+  renderer.invalidate(shot.id);
+  if (keepOpen) return;
   closeEditorMedia();
   $('editDialog').close();
-  renderer.invalidate(shot.id);
   await save();
   await renderShots();
   renderHeader();
   renderer.showFrame(shot.start + 0.01).catch(() => {});
-});
+}
 
 // ---------- cloud save indicator ----------
 onSync(({ state, error }) => {
