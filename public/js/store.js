@@ -79,6 +79,7 @@ async function linkTx(mode, fn) {
 export function fileKeys(p) {
   const keys = new Set([p.id + ':audio']);
   for (const s of p.shots || []) if (s.choice && s.choice.custom) keys.add(s.choice.custom);
+  for (const o of p.own || []) if (o.key) keys.add(o.key);
   if (p.kind === 'case') {
     keys.add(`${p.id}:n:narration`);
     for (const s of (p.story && p.story.segments) || []) for (const m of s.media || []) if (m.key) keys.add(m.key);

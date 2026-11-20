@@ -3,6 +3,7 @@ import { store as localStore } from './store.js';
 import { alignWords, buildCues, setCueText, setCueTime, cueText, toSRT, retimeShots, PRESETS, DEFAULT_STYLE } from './captions.js';
 import { readAAF, readAudio, readScript, buildTimeline, wordCountCheck } from './importer.js';
 import { Renderer, drawMedia, mediaLayout, frameFor, SIZES, loadVideo, loadImage } from './renderer.js';
+import { timeline, initOwn, renderOwn, placedRanges, placeStart, ownOf, movePlaced, roomAt } from './own.js';
 
 const $ = id => document.getElementById(id);
 const fmt = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = Math.floor(t % 60); return `${m}:${String(s).padStart(2, '0')}`; };
@@ -11,7 +12,8 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 let project = null;
 let brollOpened = false; // the B-roll project is opened the first time B-roll builder is shown
 let audioBlob = null;
-let selectedShot = 0;
+let selectedShot = 0; // index in tl
+let tl = [];          // what plays: the stock shots with your own files cut in (own.js)
 let cancelFlag = false;
 let busy = false;
 const objectUrls = new Map();
@@ -176,26 +178,29 @@ async function openProject(id) {
   if (!audioBlob) alert('The narration audio for this project could not be found on this computer or in the cloud.');
   for (const u of objectUrls.values()) URL.revokeObjectURL(u);
   objectUrls.clear();
-  renderer.setProject(project.shots, audioBlob);
+  tl = timeline(project);
+  renderer.setProject(tl, audioBlob);
   applyAspect();
   selectedShot = 0;
   $('importPanel').classList.add('hidden');
   $('projectPanel').classList.remove('hidden');
   renderHeader();
   renderShots();
+  renderOwn();
   renderCaptions();
   refreshProjects();
   clearCanvas();
-  if (project.shots.some(s => s.choice)) renderer.showFrame(0).catch(() => {});
+  if (tl.some(s => s.choice)) renderer.showFrame(0).catch(() => {});
 }
 
 function renderHeader() {
   $('projectTitle').textContent = project.title;
   $('projectTitle').classList.remove('hidden');
   $('titleEdit').classList.add('hidden');
-  const empty = project.shots.filter(s => !s.choice).length;
+  const empty = tl.filter(s => !s.choice).length;
+  const mine = placedRanges(project).length;
   $('projectMeta').textContent = `${fmt(project.duration)} · ${project.sentences.length} sentences · ${project.shots.length} shots` +
-    (empty ? ` · ${empty} need footage` : '') + ' · ' + project.note;
+    (mine ? ` · ${mine} of your files` : '') + (empty ? ` · ${empty} need footage` : '') + ' · ' + project.note;
   $('timeLabel').textContent = `0:00 / ${fmt(project.duration)}`;
   document.querySelectorAll('#formatSeg button').forEach(b => b.classList.toggle('active', b.dataset.aspect === aspectOf()));
   const anyPicked = project.sentences.some(s => s.pick);
@@ -231,28 +236,59 @@ async function ensureCustomUrls() {
   }
 }
 
+function refreshTimeline() {
+  tl = timeline(project);
+  renderer.shots = tl;
+  if (selectedShot >= tl.length) selectedShot = Math.max(0, tl.length - 1);
+}
+
 async function renderShots() {
+  refreshTimeline();
   await ensureCustomUrls();
-  $('shotList').innerHTML = project.shots.map((shot, i) => {
-    const sen = sentenceOf(shot);
-    const c = shot.choice;
-    const kind = !c ? 'none' : (c.auto ? 'ai' : 'you');
+  $('shotList').innerHTML = tl.map((seg, i) => {
+    const c = seg.choice;
     const th = thumbFor(c);
     const media = !c ? '<div class="thumb empty">No footage</div>'
       : (c.custom && c.type === 'video'
         ? `<video class="thumb" src="${th}" muted preload="metadata"></video>`
         : `<img class="thumb" src="${esc(th)}" alt="" loading="lazy">`);
+    if (seg.place) {
+      const pl = project.placed.find(x => x.id === seg.place);
+      const o = ownOf(project, pl.own);
+      const covered = project.sentences.filter(x => x.end > seg.start + 0.05 && x.start < seg.end - 0.05);
+      const more = covered.length > 1 ? ` <em class="cont">(+${covered.length - 1} more sentence${covered.length > 2 ? 's' : ''})</em>` : '';
+      const uses = o.type === 'video' ? ` · plays ${fmt(pl.from || 0)} to ${fmt((pl.from || 0) + (seg.end - seg.start))} of the clip` : '';
+      return `<li class="shot own ${i === selectedShot ? 'selected' : ''}" data-i="${i}">
+      <div class="shot-time mono">${fmt(seg.start)}</div>
+      <div class="shot-media">${media}<span class="dot own"></span></div>
+      <div class="shot-body">
+        <p>${covered.length ? esc(covered[0].text) : ''}${more}</p>
+        <div class="shot-meta"><span class="src">Your file: ${esc(o.name)} · ${o.type}</span><span class="edited">${(seg.end - seg.start).toFixed(1)}s on screen${uses}</span></div>
+      </div>
+      <div class="shot-actions">
+        <button class="btn small" data-act="ptrim">Trim / frame</button>
+        <button class="btn small ghost" data-act="pprev" title="Move to the previous sentence">◀</button>
+        <button class="btn small ghost" data-act="pnext" title="Move to the next sentence">▶</button>
+        <button class="btn small ghost" data-act="pdel" title="Take it out of the script (the file stays in your list)">Remove</button>
+        <button class="btn small ghost" data-act="play">▶ From here</button>
+      </div>
+    </li>`;
+    }
+    const shot = project.shots[seg.base];
+    const sen = sentenceOf(shot);
+    const kind = !c ? 'none' : (c.auto ? 'ai' : 'you');
     const ed = shot.edit || {};
     const edited = [];
     if (ed.start) edited.push(`starts at ${fmt(ed.start)}`);
     if (ed.frames && ed.frames[aspectOf()]) edited.push('framed');
     const why = sen && sen.pick && sen.pick.why && c && c.auto ? `<span class="why">${esc(sen.pick.why)}</span>` : '';
     const src = c ? `<span class="src">${c.custom ? 'Your file' : esc(c.source)} · ${c.type}</span>` : '';
+    const cont = shot.part > 0 || seg.start > shot.start + 0.01;
     return `<li class="shot ${kind} ${i === selectedShot ? 'selected' : ''}" data-i="${i}">
-      <div class="shot-time mono">${fmt(shot.start)}</div>
+      <div class="shot-time mono">${fmt(seg.start)}</div>
       <div class="shot-media">${media}<span class="dot ${kind}"></span></div>
       <div class="shot-body">
-        <p>${shot.part > 0 ? '<em class="cont">continued</em> ' : ''}${esc(sen ? sen.text : '')}</p>
+        <p>${cont ? '<em class="cont">continued</em> ' : ''}${esc(sen ? sen.text : '')}</p>
         <div class="shot-meta">${src}${edited.length ? `<span class="edited">${edited.join(', ')}</span>` : ''}${why}</div>
       </div>
       <div class="shot-actions">
@@ -264,17 +300,48 @@ async function renderShots() {
   }).join('');
 }
 
-$('shotList').addEventListener('click', e => {
+$('shotList').addEventListener('click', async e => {
   const li = e.target.closest('li.shot');
   if (!li) return;
   const i = +li.dataset.i;
+  const seg = tl[i];
+  if (!seg) return;
   const act = e.target.dataset.act;
   selectShot(i);
-  if (act === 'swap') openSwap(i);
-  else if (act === 'edit') openEditor(i);
-  else if (act === 'play') playFrom(project.shots[i].start);
-  else if (!renderer.running) renderer.showFrame(project.shots[i].start + 0.01).catch(() => {});
+  if (act === 'play') return playFrom(seg.start);
+  if (seg.place) {
+    if (act === 'ptrim') return openPlaceEditor(seg.place);
+    if (act === 'pprev' || act === 'pnext' || act === 'pdel') {
+      renderer.stop();
+      if (act === 'pdel') project.placed = project.placed.filter(x => x.id !== seg.place);
+      else if (!movePlaced(project, seg.place, act === 'pprev' ? -1 : 1)) return;
+      await save();
+      await ownChanged(true);
+      const k = tl.findIndex(x => x.place === seg.place);
+      if (k >= 0) goTo(tl[k].start);
+      return;
+    }
+  } else {
+    if (act === 'swap') return openSwap(seg.base);
+    if (act === 'edit') return openEditor(seg.base);
+  }
+  if (!renderer.running) renderer.showFrame(seg.start + 0.01).catch(() => {});
 });
+
+// After your files changed: redraw the list (and the shots if they moved)
+async function ownChanged(shots) {
+  renderOwn();
+  if (shots) { renderer.stop(); await renderShots(); renderHeader(); }
+}
+
+function goTo(t) {
+  const i = tl.findIndex(s => t >= s.start - 0.01 && t < s.end);
+  if (i < 0) return;
+  selectShot(i);
+  const li = document.querySelector(`#shotList li[data-i="${i}"]`);
+  if (li) li.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (!renderer.running) renderer.showFrame(tl[i].start + 0.01).catch(() => {});
+}
 
 function selectShot(i) {
   selectedShot = i;
@@ -327,7 +394,7 @@ document.querySelectorAll('#formatSeg button').forEach(b => b.addEventListener('
   renderHeader();
   renderCaptions();
   await renderShots();
-  renderer.showFrame(project.shots[selectedShot]?.start + 0.01 || 0).catch(() => {});
+  renderer.showFrame(tl[selectedShot]?.start + 0.01 || 0).catch(() => {});
 }));
 
 async function mediaUrl(choice) {
@@ -381,7 +448,7 @@ async function playFrom(t) {
   if (!project || busy) return;
   try { await renderer.play(t); } catch (e) { alert('Playback problem: ' + e.message); }
 }
-$('playBtn').addEventListener('click', () => playFrom(project.shots[selectedShot]?.start || 0));
+$('playBtn').addEventListener('click', () => playFrom(tl[selectedShot]?.start || 0));
 $('stopBtn').addEventListener('click', () => renderer.stop());
 
 // ---------- progress ----------
@@ -414,7 +481,9 @@ async function findFootage() {
       // Keep the search terms (no extra AI cost), search again and let the AI pick again
       for (const s of project.sentences) if (needs(s)) { delete s.pick; delete s.candidates; }
     }
-    const todo = () => project.sentences.filter(s => !s.pick);
+    // sentences fully covered by your own files need no stock footage
+    const open = new Set(timeline(project).filter(x => x.base != null).map(x => x.sid));
+    const todo = () => project.sentences.filter(s => !s.pick && open.has(s.id));
     const total = Math.max(1, todo().length);
 
     // 1) search terms
@@ -474,7 +543,7 @@ async function findFootage() {
     progress(false);
     renderHeader();
     renderShots();
-    renderer.setProject(project.shots, audioBlob);
+    renderer.setProject(tl, audioBlob);
     if (cancelFlag) return;
     const empty = project.shots.filter(s => !s.choice).length;
     void total;
@@ -587,7 +656,7 @@ async function probeVideo(file) {
       setTimeout(() => rej(new Error('timeout')), 20000);
       v.src = url;
     });
-    return { ok: true, w: v.videoWidth, h: v.videoHeight };
+    return { ok: true, w: v.videoWidth, h: v.videoHeight, d: v.duration || 0 };
   } catch (e) {
     return { ok: false };
   } finally {
@@ -641,8 +710,8 @@ async function afterSwap() {
   delete project.shots[swapIndex].edit;
   renderer.invalidate(project.shots[swapIndex].id);
   await save();
-  renderHeader();
   await renderShots();
+  renderHeader();
   renderer.showFrame(project.shots[swapIndex].start + 0.01).catch(() => {});
 }
 
@@ -701,7 +770,8 @@ $('exportBtn').addEventListener('click', async () => {
   renderer.stop();
   setBusy(true);
   cancelFlag = false;
-  const empty = project.shots.filter(s => !s.choice).length;
+  refreshTimeline();
+  const empty = tl.filter(s => !s.choice).length;
   const baseTitle = document.title;
   // Holding a lock keeps Chrome from putting this tab to sleep while exporting
   let releaseLock = null;
@@ -710,7 +780,7 @@ $('exportBtn').addEventListener('click', async () => {
     progress(true, 0, 'Preparing clips…');
     const aspect = aspectOf();
     const shots = [];
-    for (const s of project.shots) {
+    for (const s of tl) {
       const c = s.choice;
       const item = { start: s.start, end: s.end, edit: s.edit || null, frame: frameFor(s, aspect), type: c ? c.type : null };
       if (c && c.custom) item.blob = await store.getFile(c.custom);
@@ -767,7 +837,8 @@ window.addEventListener('beforeunload', e => { if (exportWorker) { e.preventDefa
 
 // Old method (records the preview in real time) for browsers without the needed features
 async function legacyExport() {
-  const empty = project.shots.filter(s => !s.choice).length;
+  refreshTimeline();
+  const empty = tl.filter(s => !s.choice).length;
   const msg = `Export "${project.title}"?\n\nThis browser doesn't support the full-quality export, so the video is recorded in real time (about ${fmt(project.duration)}). Keep this tab in front the whole time.` +
     (empty ? `\n\n${empty} shots have no footage and will show the previous picture or black.` : '');
   if (!confirm(msg)) return;
@@ -802,7 +873,7 @@ async function legacyExport() {
 $('creditsBtn').addEventListener('click', async () => {
   if (!project) return;
   const seen = new Set(), must = [], nice = [];
-  for (const s of project.shots) {
+  for (const s of timeline(project)) {
     const c = s.choice;
     if (!c || c.custom || seen.has(c.credit)) continue;
     seen.add(c.credit);
@@ -816,11 +887,27 @@ $('creditsBtn').addEventListener('click', async () => {
   catch (e) { prompt('Copy these credits:', text); }
 });
 
+// ---------- your own photos and videos ----------
+initOwn({
+  project: () => project, save, api, esc, refreshUsage, probeVideo, fileId,
+  getFile: k => store.getFile(k), putFile: (k, f) => store.putFile(k, f), deleteFile: k => localStore.deleteFile(k),
+  urlFor: k => mediaUrl({ custom: k }),
+  selectedSeg: () => tl[selectedShot], goTo, changed: ownChanged,
+});
+
 // ---------- go ----------
 start().catch(e => { console.error(e); showLogin(); });
 
 // ---------- shot editor: start point and framing ----------
-const ed = { i: -1, el: null, start: 0, frame: {}, raf: 0, playing: false, drag: null };
+const ed = { i: -1, el: null, start: 0, frame: {}, raf: 0, playing: false, drag: null, mode: 'shot', pl: null, end: 0, len: 0, room: 0, at: 0 };
+
+function trimMode(place, photo) {
+  $('plEndRow').classList.toggle('hidden', !place);
+  $('plStartRow').classList.toggle('hidden', place && photo);
+  $('plStartName').classList.toggle('hidden', !place);
+  $('plEndName').textContent = photo ? 'How long it stays on screen' : 'End';
+  $('plTrimTitle').textContent = place ? (photo ? 'How long it stays on screen' : 'Which part of your video plays') : 'Which part of the clip plays';
+}
 
 async function openEditor(i) {
   const shot = project.shots[i];
@@ -830,6 +917,10 @@ async function openEditor(i) {
   renderer.releaseAll();
   closeEditorMedia();
   ed.i = i;
+  ed.mode = 'shot'; ed.pl = null;
+  $('trimPlay').classList.remove('hidden');
+  ed.len = shot.end - shot.start;
+  trimMode(false);
   ed.start = (shot.edit && shot.edit.start) || 0;
   ed.frame = { x: 0.5, y: 0.5, zoom: 1, mode: 'auto', ...frameFor(shot, aspectOf()) };
   const sen = sentenceOf(shot);
@@ -886,8 +977,7 @@ function drawEditor() {
     x.fillRect(0, 0, c.width, c.height);
     if (ed.el) drawMedia(x, ed.el, c.width, c.height, ed.frame);
     if (ed.playing && ed.el && ed.el.tagName === 'VIDEO') {
-      const shot = project.shots[ed.i];
-      if (ed.el.currentTime >= ed.start + (shot.end - shot.start) || ed.el.ended) stopEditorPlay();
+      if (ed.el.currentTime >= ed.start + ed.len || ed.el.ended) stopEditorPlay();
     }
     ed.raf = requestAnimationFrame(loop);
   };
@@ -895,9 +985,19 @@ function drawEditor() {
 }
 
 function updateTrimLabel() {
-  const shot = project.shots[ed.i];
-  const len = shot.end - shot.start;
-  $('trimLabel').textContent = `${fmt(ed.start)} to ${fmt(ed.start + len)}`;
+  if (ed.mode === 'place') {
+    const video = ed.el && ed.el.tagName === 'VIDEO';
+    ed.len = video ? ed.end - ed.start : ed.end;
+    const until = ed.at + ed.len;
+    $('trimLabel').textContent = video ? `${fmt(ed.start)} to ${fmt(ed.end)} of the clip` : `${ed.len.toFixed(1)} s`;
+    const covered = project.sentences.filter(x => x.end > ed.at + 0.05 && x.start < until - 0.05);
+    const last = covered[covered.length - 1];
+    $('editTime').textContent = `Your file · on screen ${fmt(ed.at)} to ${fmt(until)} (${ed.len.toFixed(1)} s) · ${covered.length} sentence${covered.length === 1 ? '' : 's'}`;
+    $('trimInfo').textContent = (last && until < last.end - 0.3 ? 'After it, the stock footage fills the rest of the sentence. ' : '') +
+      (ed.len >= ed.room - 0.05 ? `It can't go longer here: ${ed.room < (project.duration - ed.at) - 0.05 ? 'another of your files starts right after' : 'the narration ends'}.` : 'Make it longer to carry on into the next sentences.');
+    return;
+  }
+  $('trimLabel').textContent = `${fmt(ed.start)} to ${fmt(ed.start + ed.len)}`;
 }
 
 function stopEditorPlay() {
@@ -908,10 +1008,84 @@ function stopEditorPlay() {
 
 $('trimRange').addEventListener('input', () => {
   ed.start = +$('trimRange').value;
+  if (ed.mode === 'place') {
+    // keep at least half a second, and no longer than the room there is
+    if (ed.end < ed.start + 0.5) ed.end = ed.start + 0.5;
+    if (ed.end - ed.start > ed.room) ed.end = ed.start + ed.room;
+    $('plEnd').value = ed.end;
+  }
   if (ed.playing) stopEditorPlay();
   if (ed.el) ed.el.currentTime = ed.start;
   updateTrimLabel();
 });
+
+$('plEnd').addEventListener('input', () => {
+  ed.end = +$('plEnd').value;
+  if (ed.el && ed.el.tagName === 'VIDEO') {
+    if (ed.end < ed.start + 0.5) { ed.start = Math.max(0, ed.end - 0.5); }
+    if (ed.end - ed.start > ed.room) ed.start = ed.end - ed.room;
+    $('trimRange').value = ed.start;
+    if (ed.playing) stopEditorPlay();
+    ed.el.currentTime = Math.max(ed.start, ed.end - 0.05);
+  }
+  updateTrimLabel();
+});
+
+// Trim and frame one of your own placed files
+async function openPlaceEditor(plId) {
+  const pl = (project.placed || []).find(x => x.id === plId);
+  const o = pl && ownOf(project, pl.own);
+  if (!o) return;
+  renderer.stop();
+  renderer.releaseAll();
+  closeEditorMedia();
+  ed.mode = 'place'; ed.pl = pl; ed.i = -1;
+  ed.at = placedRanges(project).find(r => r.pl.id === plId)?.at ?? placeStart(project, pl);
+  ed.room = roomAt(project, ed.at, plId);
+  ed.frame = { x: 0.5, y: 0.5, zoom: 1, mode: 'auto', ...((pl.frames || {})[aspectOf()] || {}) };
+  const photo = o.type !== 'video';
+  trimMode(true, photo);
+  $('editText').textContent = `${o.name}`;
+  const [W, H] = SIZES[aspectOf()];
+  const c = $('editCanvas');
+  c.width = W / 3; c.height = H / 3;
+  c.classList.toggle('portrait', aspectOf() === '9:16');
+  $('editStatus').textContent = 'Loading…';
+  $('trimBox').classList.add('hidden');
+  $('trimPlay').classList.toggle('hidden', photo);
+  $('editDialog').showModal();
+  try {
+    const sources = await mediaSources({ custom: o.key, type: o.type });
+    if (!photo) {
+      const v = await loadVideo(sources).catch(() => { throw new Error(whyNotLoadingOwn); });
+      if (ed.pl !== pl || !$('editDialog').open) { v.removeAttribute('src'); v.load(); return; }
+      ed.el = v;
+      const d = v.duration || o.dur || 0;
+      if (d && Math.abs(d - (o.dur || 0)) > 0.2) o.dur = d;
+      ed.start = Math.min(pl.from || 0, Math.max(0, d - 0.5));
+      ed.end = Math.min(d, ed.start + Math.min(pl.len, ed.room));
+      $('trimRange').max = Math.max(0, d - 0.5).toFixed(1);
+      $('plEnd').min = '0.5'; $('plEnd').max = d.toFixed(1);
+      $('trimRange').value = ed.start; $('plEnd').value = ed.end;
+      v.currentTime = ed.start;
+    } else {
+      const res = await loadImage(sources).catch(() => { throw new Error(whyNotLoadingOwn); });
+      ed.el = res.img;
+      ed.start = 0;
+      ed.end = Math.min(pl.len, ed.room);
+      $('plEnd').min = '1'; $('plEnd').max = Math.max(1, Math.min(ed.room, 120)).toFixed(1);
+      $('plEnd').value = ed.end;
+    }
+    $('trimBox').classList.remove('hidden');
+    updateTrimLabel();
+    $('editStatus').textContent = '';
+    updateFrameControls();
+    drawEditor();
+  } catch (e) {
+    $('editStatus').textContent = e.message;
+  }
+}
+const whyNotLoadingOwn = 'Chrome could not open this file. If it keeps happening, convert it to an MP4 (H.264) or a JPG and add it again.';
 
 $('trimPlay').addEventListener('click', () => {
   if (!ed.el || ed.el.tagName !== 'VIDEO') return;
@@ -977,6 +1151,26 @@ $('editCancel').addEventListener('click', () => { closeEditorMedia(); $('editDia
 $('editDialog').addEventListener('close', closeEditorMedia);
 
 $('editSave').addEventListener('click', async () => {
+  if (ed.mode === 'place') {
+    const pl = ed.pl;
+    const frames = { ...(pl.frames || {}) };
+    const f = ed.frame;
+    const isDefault = (f.mode || 'auto') === 'auto' && (f.zoom || 1) === 1 && (f.x ?? 0.5) === 0.5 && (f.y ?? 0.5) === 0.5;
+    if (isDefault) delete frames[aspectOf()]; else frames[aspectOf()] = { ...f };
+    pl.frames = frames;
+    if (ed.el) {
+      const video = ed.el.tagName === 'VIDEO';
+      pl.from = video ? +ed.start.toFixed(2) : 0;
+      pl.len = +(video ? ed.end - ed.start : ed.end).toFixed(2);
+    }
+    closeEditorMedia();
+    $('editDialog').close();
+    renderer.invalidate('pl' + pl.id);
+    await save();
+    await ownChanged(true);
+    renderer.showFrame(ed.at + 0.01).catch(() => {});
+    return;
+  }
   const shot = project.shots[ed.i];
   const frames = { ...((shot.edit && shot.edit.frames) || {}) };
   const f = ed.frame;
@@ -988,6 +1182,7 @@ $('editSave').addEventListener('click', async () => {
   renderer.invalidate(shot.id);
   await save();
   await renderShots();
+  renderHeader();
   renderer.showFrame(shot.start + 0.01).catch(() => {});
 });
 
@@ -1045,7 +1240,7 @@ $('aiUsage').addEventListener('click', () => {
     `AI requests: ${usageInfo.requests}\n` +
     `Tokens read (text + images): ${usageInfo.inputTokens.toLocaleString('en-GB')}\n` +
     `Tokens written: ${usageInfo.outputTokens.toLocaleString('en-GB')}\n\n` +
-    `Only "Find footage" uses the AI. Searching, previewing and exporting are free.\n` +
+    `Only "Find footage" and "Place them in the script" use the AI. Searching, previewing and exporting are free.\n` +
     `This is an estimate from Google's published prices. Your exact bill is in Google AI Studio > Spend.` +
     (usageInfo.saved ? '' : '\n\n(Not saved permanently: the count restarts when the server restarts.)'));
 });
@@ -1184,7 +1379,8 @@ $('capRetime').addEventListener('click', async () => {
   renderer.stop();
   const moved = retimeShots(project);
   await save();
-  renderer.setProject(project.shots, audioBlob);
+  tl = timeline(project);
+  renderer.setProject(tl, audioBlob);
   await renderShots();
   renderer.showFrame(0).catch(() => {});
   alert(moved ? `Done: ${moved} sentence cuts were moved to match your voice exactly.` : 'Everything already lined up, nothing needed to move.');

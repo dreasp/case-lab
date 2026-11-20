@@ -122,11 +122,22 @@
             <button class="tab" data-tab="captions" type="button">Captions</button>
           </div>
           <div id="tab-shots">
+          <details id="ownBox" class="own-box" open>
+            <summary><strong>Your photos and videos</strong> <span id="ownCount" class="muted small-text"></span></summary>
+            <div class="own-add">
+              <label class="btn small">+ Add photos or videos<input id="ownAdd" type="file" multiple hidden></label>
+              <button id="ownPlace" class="btn primary small" type="button" disabled>Place them in the script</button>
+              <span id="ownStatus" class="muted small-text"></span>
+            </div>
+            <p class="muted small-text">Name each file by what it shows (for example "Danielle Smith school photo", "the house on Elm Street", "bodycam of the arrest"). "Place them in the script" lets Gemini put each one where the narration talks about it (well under 1 cent). In the shot list you can then trim them, move them or take them out, and a file can run across several sentences. The stock footage fills the rest.</p>
+            <ul id="ownList" class="own-list"></ul>
+          </details>
           <div class="shots-head">
             <h3>Shots</h3>
             <div class="legend">
               <span class="dot ai"></span>AI pick
               <span class="dot you"></span>Your choice
+              <span class="dot own"></span>Your file
               <span class="dot none"></span>Needs footage
             </div>
             <div class="grow"></div>
@@ -615,10 +626,13 @@
       </div>
       <div class="editor-controls">
         <div id="trimBox" class="hidden">
-          <h4>Which part of the clip plays</h4>
+          <h4 id="plTrimTitle">Which part of the clip plays</h4>
           <div class="trim-row"><span id="trimLabel" class="mono"></span>
             <button id="trimPlay" class="btn small" type="button">▶ Play this shot</button></div>
-          <input id="trimRange" type="range" min="0" max="0" step="0.1" value="0">
+          <label id="plStartRow" class="trim-lab"><span id="plStartName" class="small-text muted hidden">Start</span>
+            <input id="trimRange" type="range" min="0" max="0" step="0.1" value="0"></label>
+          <label id="plEndRow" class="trim-lab hidden"><span id="plEndName" class="small-text muted">End</span>
+            <input id="plEnd" type="range" min="0" max="0" step="0.1" value="0"></label>
           <p id="trimInfo" class="muted small-text"></p>
         </div>
         <h4>Picture</h4>

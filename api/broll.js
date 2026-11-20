@@ -54,6 +54,40 @@ ${group.map(s => `${s.id}: ${s.text}`).join('\n')}`;
   }
 });
 
+// Your own photos and videos: which sentence each one fits best (text only, very cheap)
+router.post('/place', async (req, res) => {
+  try {
+    const { title = '', sentences = [], items = [] } = req.body || {};
+    if (!items.length || !sentences.length) return res.status(400).json({ error: 'Nothing to place.' });
+    const prompt = `You are a video editor for a YouTube true crime documentary titled "${title}". The creator has her own photos and video clips (named by her) and wants each one placed where it fits the narration best.
+
+NARRATION, one sentence per line (id, start time in seconds, text):
+${sentences.slice(0, 1500).map(s => `${s.id} [${Math.round(s.start)}s]: ${String(s.text).slice(0, 400)}`).join('\n')}
+
+HER FILES (id, photo or video, length, her name for it):
+${items.map(i => `${i.id}: ${i.type}${i.dur ? ' ' + Math.round(i.dur) + 's' : ''}, "${String(i.name).slice(0, 200)}"`).join('\n')}
+
+For each file choose the ONE sentence where it should appear:
+- The sentence that talks about what the file shows (the person, place, object, document or moment). Prefer the first time it is introduced or the moment it matters most.
+- A photo of a person goes where that person is introduced or first described. A photo of a place goes where the place comes up. A video of an event (a call, bodycam, interview, news clip) goes where the narration reaches that event.
+- Spread the files out: avoid giving two files the same sentence unless both clearly belong there.
+- If nothing fits at all, still pick the closest sentence and say so in "why".
+
+Return JSON: { "placements": [ { "item": "<file id>", "sentence": <sentence id>, "why": "<short reason>" } ] }`;
+    const out = await generateJSON([{ text: prompt }], { temperature: 0.2 });
+    const list = (out && (out.placements || out.items)) || (Array.isArray(out) ? out : []);
+    const ids = new Set(sentences.map(s => String(s.id)));
+    const placements = {};
+    for (const p of list) {
+      if (!p || !items.some(i => String(i.id) === String(p.item)) || !ids.has(String(p.sentence))) continue;
+      placements[p.item] = { sentence: p.sentence, why: String(p.why || '').slice(0, 200) };
+    }
+    res.json({ placements });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 2) Search the stock sites for each sentence: videos first, photos only as a backup
 router.post('/candidates', async (req, res) => {
   try {
