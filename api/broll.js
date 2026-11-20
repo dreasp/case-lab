@@ -13,18 +13,14 @@ const RULES = `Hard rules for every visual:
 - Stock sites have no footage of the real people in true crime stories, so for real people describe something visible and neutral (a man in an interrogation room seen from behind, hands signing a document).`;
 
 // 1) Turn each sentence into stock-footage search terms
-router.post('/plan', async (req, res) => {
-  try {
-    const { title = '', script = '', shots = [] } = req.body || {};
-    if (!shots.length) return res.status(400).json({ error: 'No sentences sent.' });
-    const out = [];
-    for (let i = 0; i < shots.length; i += 100) {
-      const group = shots.slice(i, i + 100);
-      const prompt = `You are a video editor choosing B-roll for a YouTube documentary narration titled "${title}".
+const SAFE_PLAN = { queries: ['courthouse', 'police car', 'city night'], prefer: 'video', wiki: null, blocked: true };
 
+function planPrompt(title, script, group) {
+  return `You are a video editor choosing B-roll for a YouTube documentary narration titled "${title}".
+${script ? `
 FULL SCRIPT (for context only):
 """${String(script).slice(0, 30000)}"""
-
+` : ''}
 ${RULES}
 
 For each numbered sentence below, write search terms for free stock sites (Pixabay). The footage will be searched as VIDEO first. Pixabay's video library is smaller than its photo library and matches best with 1 or 2 plain keywords, so keep each query short and concrete, like "movie theater", "vintage car", "interrogation room", "courthouse". Make the third query broad enough that videos will surely exist (like "police car", "city night", "judge gavel").
@@ -36,19 +32,38 @@ Prefer "video" unless the sentence is about a specific real person, document or 
 
 SENTENCES:
 ${group.map(s => `${s.id}: ${s.text}`).join('\n')}`;
-      const result = await generateJSON([{ text: prompt }]);
-      const arr = Array.isArray(result) ? result : (result.shots || result.items || []);
-      for (const s of group) {
-        const r = arr.find(x => String(x.id) === String(s.id)) || {};
-        out.push({
-          id: s.id,
-          queries: (r.queries || []).map(src.cleanQuery).filter(Boolean).slice(0, 3),
-          prefer: r.prefer === 'photo' ? 'photo' : 'video',
-          wiki: r.wiki ? src.cleanQuery(r.wiki) : null,
-        });
-      }
+}
+
+// Search terms for a group of sentences. When Gemini refuses (a case involving children or sexual
+// violence can trip Google's hard block), try again without the full script, then in smaller and
+// smaller pieces, so only the sentences it truly won't read get general, neutral search terms.
+async function planGroup(title, script, group, out, withScript) {
+  try {
+    const result = await generateJSON([{ text: planPrompt(title, withScript ? script : '', group) }]);
+    const arr = Array.isArray(result) ? result : (result.shots || result.items || []);
+    for (const s of group) {
+      const r = arr.find(x => String(x.id) === String(s.id)) || {};
+      const queries = (r.queries || []).map(src.cleanQuery).filter(Boolean).slice(0, 3);
+      out.push(queries.length ? { id: s.id, queries, prefer: r.prefer === 'photo' ? 'photo' : 'video', wiki: r.wiki ? src.cleanQuery(r.wiki) : null } : { id: s.id, ...SAFE_PLAN, blocked: false });
     }
-    res.json({ shots: out });
+  } catch (e) {
+    if (e.code !== 'BLOCKED') throw e;
+    if (withScript) return planGroup(title, script, group, out, false);
+    if (group.length === 1) { out.push({ id: group[0].id, ...SAFE_PLAN }); return; }
+    const half = Math.ceil(group.length / 2);
+    await planGroup(title, script, group.slice(0, half), out, false);
+    await planGroup(title, script, group.slice(half), out, false);
+  }
+}
+
+// 1) Turn each sentence into stock-footage search terms
+router.post('/plan', async (req, res) => {
+  try {
+    const { title = '', script = '', shots = [] } = req.body || {};
+    if (!shots.length) return res.status(400).json({ error: 'No sentences sent.' });
+    const out = [];
+    for (let i = 0; i < shots.length; i += 100) await planGroup(title, script, shots.slice(i, i + 100), out, true);
+    res.json({ shots: out, blocked: out.filter(x => x.blocked).length });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -74,7 +89,12 @@ For each file choose the ONE sentence where it should appear:
 - If nothing fits at all, still pick the closest sentence and say so in "why".
 
 Return JSON: { "placements": [ { "item": "<file id>", "sentence": <sentence id>, "why": "<short reason>" } ] }`;
-    const out = await generateJSON([{ text: prompt }], { temperature: 0.2 });
+    let out;
+    try { out = await generateJSON([{ text: prompt }], { temperature: 0.2 }); }
+    catch (e) {
+      if (e.code !== 'BLOCKED') throw e;
+      return res.status(400).json({ error: 'Gemini refused to read this script (Google blocks some cases involving children or sexual violence). Place your files by hand: click a shot, then "Put at selected shot".' });
+    }
     const list = (out && (out.placements || out.items)) || (Array.isArray(out) ? out : []);
     const ids = new Set(sentences.map(s => String(s.id)));
     const placements = {};

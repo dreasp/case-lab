@@ -489,6 +489,7 @@ async function findFootage() {
   cancelFlag = false;
   const script = project.paragraphs.join('\n\n');
   const sourceErrors = new Set();
+  let blockedPlans = 0;
   try {
     // Re-run only for sentences whose shots are still empty and were not chosen by hand
     const needs = s => project.shots.some(sh => sh.sid === s.id && !sh.choice && !sh.leftEmpty);
@@ -508,6 +509,7 @@ async function findFootage() {
       const batch = list.slice(i, i + 100);
       const r = await api('plan', { title: project.title, script, shots: batch.map(s => ({ id: s.id, text: s.text })) });
       for (const p of r.shots) { const s = project.sentences.find(x => x.id === p.id); if (s) s.plan = p; }
+      blockedPlans += r.blocked || 0;
       await save();
     }
 
@@ -566,6 +568,7 @@ async function findFootage() {
       alert('Some footage searches failed:\n\n' + [...sourceErrors].slice(0, 3).join('\n') +
         '\n\nOpen /api/check on your site and send a screenshot so this can be fixed.');
     }
+    if (blockedPlans) alert(`Gemini wouldn't read ${blockedPlans} sentence(s) because of the case's subject (Google blocks some content about children or sexual violence), so those got general footage (a courthouse, a police car, a city at night). Check them and swap any that don't fit.`);
     alert(empty ? `Done. ${empty} shots still need footage (marked red). Use Swap to search or upload your own.` : 'Done. Every shot has footage. Press Play to watch.');
     renderer.showFrame(0).catch(() => {});
   } catch (e) {
