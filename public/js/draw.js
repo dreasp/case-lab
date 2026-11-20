@@ -24,12 +24,19 @@
     const [w, h] = size(el);
     if (video === undefined) video = isVideo(el);
     let mode = frame.mode || 'auto';
+    let fzoom = frame.zoom || 1;
+    // the Shorts look (big picture on a blurred background) is only for footage that isn't already
+    // the shape of the frame: vertical footage in a Short simply fills the screen
+    if (frame.big && w && h) {
+      const r = (w / h) / (W / H);
+      if (r > 0.8 && r < 1.25) { mode = 'fill'; fzoom = 1; }
+    }
     if (mode === 'auto') {
       // Photos with a very different shape are shown whole; videos fill the frame
       const ratio = (w / h) / (W / H);
       mode = !video && (ratio < 0.8 || ratio > 1.25) ? 'fit' : 'fill';
     }
-    const zoom = (frame.zoom || 1) * extraZoom;
+    const zoom = fzoom * extraZoom;
     const s = (mode === 'fit' ? Math.min(W / w, H / h) : Math.max(W / w, H / h)) * zoom;
     return { w, h, mode, dw: w * s, dh: h * s };
   }

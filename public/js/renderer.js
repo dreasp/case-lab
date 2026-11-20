@@ -10,9 +10,12 @@ export const SIZES = { '16:9': [1920, 1080], '9:16': [1080, 1920] };
 export const mediaLayout = (...a) => window.CaseDraw.mediaLayout(...a);
 export const drawMedia = (...a) => window.CaseDraw.drawMedia(...a);
 
-export function frameFor(shot, aspect) {
-  return (shot.edit && shot.edit.frames && shot.edit.frames[aspect]) || {};
+// fallback: the project's default look when a shot has no framing of its own
+export function frameFor(shot, aspect, fallback) {
+  return (shot.edit && shot.edit.frames && shot.edit.frames[aspect]) || fallback || {};
 }
+// B-roll Shorts: big picture on a blurred background (like footage analysis Shorts), or fill the screen
+export const SHORT_BIG = { mode: 'fit', zoom: 1.35, y: 0.4, big: true };
 
 // Try each address in turn (direct from the stock site first, then through our server),
 // so one refused request doesn't leave a shot empty.
@@ -76,6 +79,7 @@ export class Renderer {
     this.cache = new Map();            // shot.id -> {status, el, url}
     this.running = false;
     this.aspect = '16:9';
+    this.defaultFrame = null;  // () => the project's default framing for this format
   }
 
   setAspect(aspect) {
@@ -185,7 +189,7 @@ export class Renderer {
       const p = Math.min(1, Math.max(0, (t - shot.start) / Math.max(0.1, shot.end - shot.start)));
       kb = i % 2 === 0 ? 1 + 0.08 * p : 1.08 - 0.08 * p;
     }
-    drawMedia(x, it.el, W, H, frameFor(shot, this.aspect), kb);
+    drawMedia(x, it.el, W, H, frameFor(shot, this.aspect, this.defaultFrame && this.defaultFrame()), kb);
     x.globalAlpha = 1;
   }
 

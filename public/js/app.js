@@ -2,7 +2,7 @@ import { cloudStore as store, syncAll, onSync } from './cloud.js';
 import { store as localStore } from './store.js';
 import { alignWords, buildCues, setCueText, setCueTime, cueText, toSRT, retimeShots, PRESETS, DEFAULT_STYLE } from './captions.js';
 import { readAAF, readAudio, readScript, buildTimeline, wordCountCheck } from './importer.js';
-import { Renderer, drawMedia, mediaLayout, frameFor, SIZES, loadVideo, loadImage } from './renderer.js';
+import { Renderer, drawMedia, mediaLayout, frameFor, SIZES, SHORT_BIG, loadVideo, loadImage } from './renderer.js';
 import { timeline, initOwn, renderOwn, placedRanges, placeStart, ownOf, movePlaced, roomAt } from './own.js';
 
 const $ = id => document.getElementById(id);
@@ -378,9 +378,15 @@ function clearCanvas() {
 
 // ---------- format: 16:9 long form or 9:16 Short ----------
 function aspectOf() { return (project && project.aspect) || '16:9'; }
+// The default look of a shot with no framing of its own: Shorts get the blurred background unless switched off
+function defFrame() { return aspectOf() === '9:16' && project && project.shortLook !== 'fill' ? SHORT_BIG : null; }
+const sameFrame = (a, b) => ['mode', 'zoom', 'x', 'y'].every(k => ((a || {})[k] ?? { mode: 'auto', zoom: 1, x: 0.5, y: 0.5 }[k]) === ((b || {})[k] ?? { mode: 'auto', zoom: 1, x: 0.5, y: 0.5 }[k]));
 
 function applyAspect() {
   renderer.setAspect(aspectOf());
+  renderer.defaultFrame = defFrame;
+  $('lookSeg').classList.toggle('hidden', aspectOf() !== '9:16');
+  document.querySelectorAll('#lookSeg button').forEach(b => b.classList.toggle('active', b.dataset.look === (project && project.shortLook === 'fill' ? 'fill' : 'big')));
   $('viewer').classList.toggle('portrait', aspectOf() === '9:16');
   clearCanvas();
 }
@@ -394,6 +400,15 @@ document.querySelectorAll('#formatSeg button').forEach(b => b.addEventListener('
   renderHeader();
   renderCaptions();
   await renderShots();
+  renderer.showFrame(tl[selectedShot]?.start + 0.01 || 0).catch(() => {});
+}));
+
+document.querySelectorAll('#lookSeg button').forEach(b => b.addEventListener('click', async () => {
+  if (!project || busy) return;
+  renderer.stop();
+  project.shortLook = b.dataset.look === 'fill' ? 'fill' : 'big';
+  await save();
+  applyAspect();
   renderer.showFrame(tl[selectedShot]?.start + 0.01 || 0).catch(() => {});
 }));
 
@@ -782,7 +797,7 @@ $('exportBtn').addEventListener('click', async () => {
     const shots = [];
     for (const s of tl) {
       const c = s.choice;
-      const item = { start: s.start, end: s.end, edit: s.edit || null, frame: frameFor(s, aspect), type: c ? c.type : null };
+      const item = { start: s.start, end: s.end, edit: s.edit || null, frame: frameFor(s, aspect, defFrame()), type: c ? c.type : null };
       if (c && c.custom) item.blob = await store.getFile(c.custom);
       else if (c) item.sources = await exportSources(c);
       shots.push(item);
@@ -922,7 +937,7 @@ async function openEditor(i) {
   ed.len = shot.end - shot.start;
   trimMode(false);
   ed.start = (shot.edit && shot.edit.start) || 0;
-  ed.frame = { x: 0.5, y: 0.5, zoom: 1, mode: 'auto', ...frameFor(shot, aspectOf()) };
+  ed.frame = { x: 0.5, y: 0.5, zoom: 1, mode: 'auto', ...frameFor(shot, aspectOf(), defFrame()) };
   const sen = sentenceOf(shot);
   const len = shot.end - shot.start;
   $('editTime').textContent = `${fmt(shot.start)} to ${fmt(shot.end)} · ${len.toFixed(1)}s on screen · ${aspectOf() === '9:16' ? '9:16 Short' : '16:9'}`;
@@ -1042,7 +1057,7 @@ async function openPlaceEditor(plId) {
   ed.mode = 'place'; ed.pl = pl; ed.i = -1;
   ed.at = placedRanges(project).find(r => r.pl.id === plId)?.at ?? placeStart(project, pl);
   ed.room = roomAt(project, ed.at, plId);
-  ed.frame = { x: 0.5, y: 0.5, zoom: 1, mode: 'auto', ...((pl.frames || {})[aspectOf()] || {}) };
+  ed.frame = { x: 0.5, y: 0.5, zoom: 1, mode: 'auto', ...((pl.frames || {})[aspectOf()] || defFrame() || {}) };
   const photo = o.type !== 'video';
   trimMode(true, photo);
   $('editText').textContent = `${o.name}`;
@@ -1116,7 +1131,7 @@ $('zoomRange').addEventListener('input', () => {
 });
 
 $('frameReset').addEventListener('click', () => {
-  ed.frame = { x: 0.5, y: 0.5, zoom: 1, mode: 'auto' };
+  ed.frame = { x: 0.5, y: 0.5, zoom: 1, mode: 'auto', ...(defFrame() || {}) };
   updateFrameControls();
 });
 
@@ -1155,7 +1170,7 @@ $('editSave').addEventListener('click', async () => {
     const pl = ed.pl;
     const frames = { ...(pl.frames || {}) };
     const f = ed.frame;
-    const isDefault = (f.mode || 'auto') === 'auto' && (f.zoom || 1) === 1 && (f.x ?? 0.5) === 0.5 && (f.y ?? 0.5) === 0.5;
+    const isDefault = sameFrame(f, defFrame() || {});
     if (isDefault) delete frames[aspectOf()]; else frames[aspectOf()] = { ...f };
     pl.frames = frames;
     if (ed.el) {
@@ -1174,7 +1189,7 @@ $('editSave').addEventListener('click', async () => {
   const shot = project.shots[ed.i];
   const frames = { ...((shot.edit && shot.edit.frames) || {}) };
   const f = ed.frame;
-  const isDefault = (f.mode || 'auto') === 'auto' && (f.zoom || 1) === 1 && (f.x ?? 0.5) === 0.5 && (f.y ?? 0.5) === 0.5;
+  const isDefault = sameFrame(f, defFrame() || {});
   if (isDefault) delete frames[aspectOf()]; else frames[aspectOf()] = { ...f };
   shot.edit = { start: shot.choice.type === 'video' ? ed.start : 0, frames };
   closeEditorMedia();

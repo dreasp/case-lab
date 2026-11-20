@@ -803,7 +803,7 @@ function placeCaptions(y) {
 }
 export function shortFrame(c) {
   const f = c.frame || {};
-  return f.mode === 'fill' ? { mode: 'fill', x: f.x == null ? 0.5 : f.x } : { mode: 'fit', zoom: 1.35, y: 0.4 };
+  return f.mode === 'fill' ? { mode: 'fill', x: f.x == null ? 0.5 : f.x } : { mode: 'fit', zoom: 1.35, y: 0.4, big: true };
 }
 // Draws the picture that is showing now (with faces blurred), for blurring and transitions
 function drawPicture(x, W, H, withBlur) {
