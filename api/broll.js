@@ -70,39 +70,82 @@ router.post('/plan', async (req, res) => {
 });
 
 // Your own photos and videos: which sentence each one fits best (text only, very cheap)
-router.post('/place', async (req, res) => {
-  try {
-    const { title = '', sentences = [], items = [] } = req.body || {};
-    if (!items.length || !sentences.length) return res.status(400).json({ error: 'Nothing to place.' });
-    const prompt = `You are a video editor for a YouTube true crime documentary titled "${title}". The creator has her own photos and video clips (named by her) and wants each one placed where it fits the narration best.
+const STOP = new Set('the and with from that this when where what about into over under after before their there they them his her him she he was were has had have for are our your you its photo picture video clip footage image shot of on in at to a an by'.split(' '));
+const words = t => String(t || '').toLowerCase().replace(/[^a-z0-9\s']/g, ' ').split(/\s+/).filter(w => w.length > 2 && !STOP.has(w));
 
-NARRATION, one sentence per line (id, start time in seconds, text):
-${sentences.slice(0, 1500).map(s => `${s.id} [${Math.round(s.start)}s]: ${String(s.text).slice(0, 400)}`).join('\n')}
+// Free backup: the sentence that shares the most words with the file's name (names count double)
+function matchByName(item, sentences) {
+  const nameWords = words(item.name);
+  const caps = new Set((String(item.name).match(/\b[A-Z][a-z]+/g) || []).map(w => w.toLowerCase()));
+  if (!nameWords.length) return null;
+  let best = null, bestScore = 0;
+  for (const s of sentences) {
+    const sw = new Set(words(s.text));
+    let score = 0;
+    for (const w of nameWords) if (sw.has(w)) score += caps.has(w) ? 2 : 1;
+    if (score > bestScore) { best = s; bestScore = score; }
+  }
+  return bestScore >= 2 ? { sentence: best.id, why: 'Matched by the words in its name', score: 1 } : null;
+}
+
+function placePrompt(title, sentences, items, part) {
+  return `You are a video editor for a YouTube true crime documentary titled "${title}". The creator has her own photos and video clips (named by her) and wants each one placed where it fits the narration best.
+
+${part ? 'PART OF THE NARRATION' : 'NARRATION'}, one sentence per line (id, start time in seconds, text):
+${sentences.map(s => `${s.id} [${Math.round(s.start)}s]: ${String(s.text).slice(0, 400)}`).join('\n')}
 
 HER FILES (id, photo or video, length, her name for it):
 ${items.map(i => `${i.id}: ${i.type}${i.dur ? ' ' + Math.round(i.dur) + 's' : ''}, "${String(i.name).slice(0, 200)}"`).join('\n')}
 
 For each file choose the ONE sentence where it should appear:
 - The sentence that talks about what the file shows (the person, place, object, document or moment). Prefer the first time it is introduced or the moment it matters most.
-- A photo of a person goes where that person is introduced or first described. A photo of a place goes where the place comes up. A video of an event (a call, bodycam, interview, news clip) goes where the narration reaches that event.
+- A photo of a person goes where that person is introduced or first described. A photo of a place goes where the place comes up. A video of an event (a show, a call, bodycam, interview, news clip) goes where the narration reaches that event.
 - Spread the files out: avoid giving two files the same sentence unless both clearly belong there.
-- If nothing fits at all, still pick the closest sentence and say so in "why".
+${part ? '- This is only part of the narration: leave out any file that does not clearly fit one of THESE sentences.' : '- If nothing fits at all, still pick the closest sentence and say so in "why".'}
+- "score": 3 = this sentence is clearly about what the file shows, 2 = good fit, 1 = loose fit.
 
-Return JSON: { "placements": [ { "item": "<file id>", "sentence": <sentence id>, "why": "<short reason>" } ] }`;
-    let out;
-    try { out = await generateJSON([{ text: prompt }], { temperature: 0.2 }); }
-    catch (e) {
-      if (e.code !== 'BLOCKED') throw e;
-      return res.status(400).json({ error: 'Gemini refused to read this script (Google blocks some cases involving children or sexual violence). Place your files by hand: click a shot, then "Put at selected shot".' });
-    }
+Return JSON: { "placements": [ { "item": "<file id>", "sentence": <sentence id>, "score": 1-3, "why": "<short reason>" } ] }`;
+}
+
+// Asks Gemini for placements; when it refuses (some cases trip Google's hard block), it asks again
+// about smaller parts of the narration, skipping only the parts it won't read
+async function placeIn(title, sentences, items, part, found) {
+  try {
+    const out = await generateJSON([{ text: placePrompt(title, sentences, items, part) }], { temperature: 0.2 });
     const list = (out && (out.placements || out.items)) || (Array.isArray(out) ? out : []);
     const ids = new Set(sentences.map(s => String(s.id)));
-    const placements = {};
     for (const p of list) {
       if (!p || !items.some(i => String(i.id) === String(p.item)) || !ids.has(String(p.sentence))) continue;
-      placements[p.item] = { sentence: p.sentence, why: String(p.why || '').slice(0, 200) };
+      (found[p.item] = found[p.item] || []).push({ sentence: p.sentence, why: String(p.why || '').slice(0, 200), score: Number(p.score) || 2 });
     }
-    res.json({ placements });
+  } catch (e) {
+    if (e.code !== 'BLOCKED') throw e;
+    if (sentences.length <= 3) return 1;
+    const size = part ? Math.ceil(sentences.length / 2) : 40;
+    let skipped = 0;
+    for (let i = 0; i < sentences.length; i += size) skipped += await placeIn(title, sentences.slice(i, i + size), items, true, found) || 0;
+    return skipped;
+  }
+  return 0;
+}
+
+router.post('/place', async (req, res) => {
+  try {
+    const { title = '', sentences = [], items = [] } = req.body || {};
+    if (!items.length || !sentences.length) return res.status(400).json({ error: 'Nothing to place.' });
+    const list = sentences.slice(0, 1500);
+    const found = {};
+    const skipped = await placeIn(title, list, items, false, found);
+    const order = new Map(list.map((s, i) => [String(s.id), i]));
+    const placements = {};
+    for (const it of items) {
+      const opts = found[it.id] || [];
+      // the strongest fit; between equals, the earliest in the narration
+      opts.sort((a, b) => b.score - a.score || order.get(String(a.sentence)) - order.get(String(b.sentence)));
+      placements[it.id] = opts[0] || matchByName(it, list);
+      if (!placements[it.id]) delete placements[it.id];
+    }
+    res.json({ placements, skipped });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

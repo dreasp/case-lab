@@ -3,7 +3,7 @@ import { store as localStore } from './store.js';
 import { alignWords, buildCues, setCueText, setCueTime, cueText, toSRT, retimeShots, PRESETS, DEFAULT_STYLE } from './captions.js';
 import { readAAF, readAudio, readScript, buildTimeline, wordCountCheck } from './importer.js';
 import { Renderer, drawMedia, mediaLayout, frameFor, SIZES, SHORT_BIG, loadVideo, loadImage } from './renderer.js';
-import { timeline, initOwn, renderOwn, placedRanges, placeStart, ownOf, movePlaced, roomAt } from './own.js';
+import { timeline, initOwn, renderOwn, placedRanges, placeStart, ownOf, movePlaced, roomAt, placeFiles, unplacedOwn } from './own.js';
 
 const $ = id => document.getElementById(id);
 const fmt = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = Math.floor(t % 60); return `${m}:${String(s).padStart(2, '0')}`; };
@@ -490,7 +490,14 @@ async function findFootage() {
   const script = project.paragraphs.join('\n\n');
   const sourceErrors = new Set();
   let blockedPlans = 0;
+  let ownNote = '';
   try {
+    // 0) your own photos and videos go in first, so their sentences need no stock footage
+    if (unplacedOwn(project).length) {
+      progress(true, 0.02, 'Placing your photos and videos in the script…');
+      ownNote = await placeFiles(false);
+      await ownChanged(true);
+    }
     // Re-run only for sentences whose shots are still empty and were not chosen by hand
     const needs = s => project.shots.some(sh => sh.sid === s.id && !sh.choice && !sh.leftEmpty);
     if (project.sentences.some(s => s.pick)) {
@@ -568,6 +575,7 @@ async function findFootage() {
       alert('Some footage searches failed:\n\n' + [...sourceErrors].slice(0, 3).join('\n') +
         '\n\nOpen /api/check on your site and send a screenshot so this can be fixed.');
     }
+    if (ownNote) alert(ownNote);
     if (blockedPlans) alert(`Gemini wouldn't read ${blockedPlans} sentence(s) because of the case's subject (Google blocks some content about children or sexual violence), so those got general footage (a courthouse, a police car, a city at night). Check them and swap any that don't fit.`);
     alert(empty ? `Done. ${empty} shots still need footage (marked red). Use Swap to search or upload your own.` : 'Done. Every shot has footage. Press Play to watch.');
     renderer.showFrame(0).catch(() => {});
@@ -908,7 +916,7 @@ $('creditsBtn').addEventListener('click', async () => {
 // ---------- your own photos and videos ----------
 initOwn({
   project: () => project, save, api, esc, refreshUsage, probeVideo, fileId,
-  getFile: k => store.getFile(k), putFile: (k, f) => store.putFile(k, f), deleteFile: k => localStore.deleteFile(k),
+  getFile: k => store.getFile(k), putFile: (k, f) => store.putFile(k, f), putFileSafe: (k, f) => store.putFileSafe(k, f), deleteFile: k => localStore.deleteFile(k),
   urlFor: k => mediaUrl({ custom: k }),
   selectedSeg: () => tl[selectedShot], goTo, changed: ownChanged,
 });

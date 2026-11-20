@@ -135,7 +135,7 @@ export function initOwn(helpers) {
   box.addEventListener('dragover', e => { e.preventDefault(); box.classList.add('over'); });
   box.addEventListener('dragleave', () => box.classList.remove('over'));
   box.addEventListener('drop', e => { e.preventDefault(); box.classList.remove('over'); addFiles([...e.dataTransfer.files]); });
-  $('ownPlace').addEventListener('click', placeWithAI);
+  $('ownPlace').addEventListener('click', () => placeFiles(true));
   $('ownList').addEventListener('input', e => {
     const id = e.target.dataset.ownName;
     if (!id) return;
@@ -187,7 +187,13 @@ async function addFiles(files) {
     } else info = await imageSize(f);
     const key = `${p.id}:u:${X.fileId(f)}`;
     if (p.own.some(o => o.key === key)) continue;
-    if (!(await X.getFile(key))) await X.putFile(key, f);
+    if (!(await X.getFile(key))) {
+      status.textContent = `Saving ${f.name}…`;
+      try {
+        const where = await X.putFileSafe(key, f);
+        if (where === 'cloud') status.textContent = `${f.name} is saved in the cloud (Chrome had no room to keep a copy on this computer).`;
+      } catch (e) { alert(`"${f.name}" could not be saved: ${e.message}`); continue; }
+    }
     p.own.push({
       id: Date.now().toString(36) + k, key, type: video ? 'video' : 'photo',
       name: f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim(),
@@ -195,7 +201,7 @@ async function addFiles(files) {
     });
     added++;
   }
-  status.textContent = added ? `Added ${added}. Give each one a clear name, then click "Place them in the script".` : '';
+  status.textContent = added ? `Added ${added}. Give each one a clear name. "Find footage automatically" places them for you (or click "Place them in the script").` : '';
   await X.save();
   X.changed(false);
 }
@@ -209,12 +215,16 @@ function imageSize(f) {
   });
 }
 
-async function placeWithAI() {
+export const unplacedOwn = p => (p.own || []).filter(o => !(p.placed || []).some(x => x.own === o.id));
+
+// Puts the files that aren't in the script yet where they fit. interactive: from the button (asks and
+// alerts); otherwise it runs quietly at the start of "Find footage automatically" and returns a note.
+export async function placeFiles(interactive) {
   const p = X.project();
-  const todo = (p.own || []).filter(o => !(p.placed || []).some(x => x.own === o.id));
-  if (!todo.length) return alert((p.own || []).length ? 'All your files are already in the script. To move one, use the arrows on it in the shot list.' : 'Add some photos or videos first.');
+  const todo = unplacedOwn(p);
+  if (!todo.length) { if (interactive) alert((p.own || []).length ? 'All your files are already in the script. To move one, use the arrows on it in the shot list.' : 'Add some photos or videos first.'); return ''; }
   const unnamed = todo.filter(o => !o.name.trim() || /^(img|dsc|vid|pxl|screenshot|whatsapp)\b|^\d+$/i.test(o.name.trim()));
-  if (unnamed.length && !confirm(`${unnamed.length} file(s) still have camera-style names (like "${unnamed[0].name}"). The app places files by their names, so clear names work much better.\n\nPlace them anyway?`)) return;
+  if (interactive && unnamed.length && !confirm(`${unnamed.length} file(s) still have camera-style names (like "${unnamed[0].name}"). The app places files by their names, so clear names work much better.\n\nPlace them anyway?`)) return '';
   const btn = $('ownPlace'), status = $('ownStatus');
   btn.disabled = true; status.textContent = 'Gemini is reading the script…';
   try {
@@ -231,9 +241,14 @@ async function placeWithAI() {
     await X.save();
     X.changed(true);
     if (X.refreshUsage) X.refreshUsage();
-    status.textContent = `Placed ${placed.length} of ${todo.length}.` + (missed.length ? ` Not placed (no room or no match): ${missed.join(', ')}. Click a shot and use "Put at selected shot".` : ' Check them in the shot list (marked "Your file").');
-  } catch (e) { status.textContent = 'Placing failed: ' + e.message; }
-  finally { btn.disabled = false; }
+    const note = `Placed ${placed.length} of your ${todo.length} file(s).` + (missed.length ? ` Not placed (no room or no match): ${missed.join(', ')}. Click a shot and use "Put at selected shot".` : ' Check them in the shot list (marked "Your file").');
+    status.textContent = note;
+    return note;
+  } catch (e) {
+    status.textContent = 'Placing failed: ' + e.message;
+    if (!interactive) return 'Your files were not placed: ' + e.message;
+    return '';
+  } finally { btn.disabled = false; }
 }
 
 const fmt1 = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = Math.floor(t % 60); return `${m}:${String(s).padStart(2, '0')}`; };
@@ -262,8 +277,12 @@ export async function renderOwn() {
   }).join('');
   for (const el of $('ownList').querySelectorAll('[data-own-thumb]')) {
     const o = ownOf(p, el.dataset.ownThumb);
-    const u = o && await X.urlFor(o.key);
-    if (!u) { el.textContent = 'Missing'; continue; }
+    let u = null;
+    for (let k = 0; k < 6 && !u && o; k++) {
+      u = await X.urlFor(o.key).catch(() => null);
+      if (!u && k < 5) { el.textContent = 'Loading…'; await new Promise(r => setTimeout(r, 4000)); }
+    }
+    if (!u) { el.textContent = 'Still uploading or not found'; continue; }
     el.innerHTML = o.type === 'video' ? `<video src="${u}#t=0.5" muted preload="metadata"></video>` : `<img src="${u}" alt="">`;
   }
 }
